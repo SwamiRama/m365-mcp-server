@@ -1,0 +1,85 @@
+{
+  "name": "@anthropic/m365-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Microsoft 365 - Email and SharePoint/OneDrive access with OAuth 2.1 + PKCE",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "m365-mcp-server": "./dist/index.js"
+  },
+  "mcpName": "io.github.anthropic/m365-mcp-server",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "microsoft-365",
+    "graph-api",
+    "oauth",
+    "email",
+    "sharepoint",
+    "onedrive",
+    "open-webui"
+  ],
+  "author": "Anthropic",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropic/m365-mcp-server"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.6.0",
+    "@azure/msal-node": "^2.16.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.4.2",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "uuid": "^11.0.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.7",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.21.0",
+    "@typescript-eslint/parser": "^8.21.0",
+    "@vitest/coverage-v8": "^3.0.4",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^10.0.1",
+    "msw": "^2.7.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.anthropic/m365-mcp-server",
+  "title": "Microsoft 365 MCP Server",
+  "description": "MCP Server for Microsoft 365 - Access email, SharePoint, and OneDrive with OAuth 2.1 + PKCE authentication via Azure AD/Entra ID. Enforces least privilege through delegated permissions.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/anthropic/m365-mcp-server",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@anthropic/m365-mcp-server",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AZURE_CLIENT_ID",
+          "description": "Azure AD/Entra ID Application (client) ID",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "uuid"
+        },
+        {
+          "name": "AZURE_CLIENT_SECRET",
+          "description": "Azure AD/Entra ID Client Secret",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "AZURE_TENANT_ID",
+          "description": "Azure AD/Entra ID Directory (tenant) ID",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "SESSION_SECRET",
+          "description": "Secret for encrypting session data (min 32 characters)",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "MCP_SERVER_PORT",
+          "description": "Port to run the server on",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "3000"
+        },
+        {
+          "name": "MCP_SERVER_BASE_URL",
+          "description": "Base URL for the server (used for OAuth callbacks)",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "http://localhost:3000"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://m365-mcp.example.com/mcp",
+      "headers": [
+        {
+          "name": "MCP-Session-Id",
+          "description": "Session ID for authenticated requests (obtained after OAuth login)",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ],
+      "variables": {
+        "base_url": {
+          "description": "Base URL of your m365-mcp-server deployment",
+          "isRequired": true,
+          "default": "https://m365-mcp.example.com"
+        }
+      }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "category": "productivity",
+      "integrations": ["microsoft-365", "outlook", "sharepoint", "onedrive"],
+      "authMethod": "oauth2-pkce",
+      "authProvider": "azure-ad",
+      "openWebUiCompatible": true
+    }
+  }
+}

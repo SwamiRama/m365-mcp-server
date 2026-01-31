@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "m365": {
+      "url": "http://m365-mcp-server:3000/mcp",
+      "transport": "streamable-http",
+      "headers": {
+        "Accept": "application/json, text/event-stream"
+      }
+    }
+  }
+}

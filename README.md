@@ -1,0 +1,256 @@
+# m365-mcp-server
+
+A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, providing secure access to Email, SharePoint, and OneDrive through Azure AD/Entra ID authentication with OAuth 2.1 + PKCE.
+
+## Features
+
+- **Email Access**: List folders, search messages, read email content
+- **SharePoint/OneDrive**: Browse sites, drives, folders, and download files
+- **OAuth 2.1 + PKCE**: Secure authentication via Azure AD/Entra ID
+- **Delegated Permissions**: Users access only their authorized content
+- **Open WebUI Compatible**: Works with native MCP or MCPO proxy
+- **Production Ready**: Docker support, security hardening, structured logging
+
+## Quick Start
+
+### 1. Azure AD Setup
+
+Follow [docs/entra-app-registration.md](docs/entra-app-registration.md) to create an Azure AD app registration with these permissions:
+- `openid`, `offline_access` (OIDC)
+- `User.Read`, `Mail.Read`, `Files.Read` (Microsoft Graph)
+
+### 2. Configuration
+
+Create a `.env` file:
+
+```env
+# Azure AD / Entra ID (required)
+AZURE_CLIENT_ID=your-client-id
+AZURE_CLIENT_SECRET=your-client-secret
+AZURE_TENANT_ID=your-tenant-id
+
+# Server
+MCP_SERVER_PORT=3000
+MCP_SERVER_BASE_URL=http://localhost:3000
+SESSION_SECRET=$(openssl rand -hex 32)
+
+# Optional
+LOG_LEVEL=info
+REDIS_URL=redis://localhost:6379
+```
+
+### 3. Run Locally
+
+```bash
+# Install dependencies
+npm install
+
+# Development mode
+npm run dev
+
+# Production build
+npm run build
+npm start
+```
+
+### 4. Authenticate
+
+1. Open `http://localhost:3000/auth/login` in a browser
+2. Sign in with your Microsoft 365 account
+3. Note the session ID returned after login
+
+## Docker Deployment
+
+### Basic
+
+```bash
+cd docker
+docker-compose up -d m365-mcp-server redis
+```
+
+### With Open WebUI
+
+```bash
+cd docker
+docker-compose --profile with-webui up -d
+```
+
+### With MCPO Proxy
+
+```bash
+cd docker
+docker-compose --profile with-mcpo up -d
+```
+
+## Open WebUI Integration
+
+### Option A: Native MCP (Recommended)
+
+1. In Open WebUI, go to **Admin Settings** > **Tools**
+2. Add MCP Server:
+   ```json
+   {
+     "url": "http://localhost:3000/mcp",
+     "transport": "streamable-http"
+   }
+   ```
+3. Complete OAuth login when prompted
+
+### Option B: Via MCPO Proxy
+
+1. Start MCPO with the provided config:
+   ```bash
+   mcpo --config docker/mcpo-config.json --port 8000
+   ```
+2. In Open WebUI, add as OpenAPI Tool:
+   ```
+   http://localhost:8000/openapi.json
+   ```
+
+## MCP Tools
+
+### Email Tools
+
+| Tool | Description |
+|------|-------------|
+| `mail_list_messages` | List messages with optional filters |
+| `mail_get_message` | Get full message details |
+| `mail_list_folders` | List mail folders |
+
+### SharePoint/OneDrive Tools
+
+| Tool | Description |
+|------|-------------|
+| `sp_list_sites` | Search and list SharePoint sites |
+| `sp_list_drives` | List drives (OneDrive/document libraries) |
+| `sp_list_children` | List folder contents |
+| `sp_get_file` | Download file content (max 10MB) |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/auth/login` | GET | Initiate OAuth login |
+| `/auth/callback` | GET | OAuth callback |
+| `/auth/logout` | GET | Logout and revoke session |
+| `/auth/status` | GET | Check authentication status |
+| `/mcp` | POST | MCP JSON-RPC endpoint |
+| `/mcp` | GET | MCP SSE stream endpoint |
+| `/mcp` | DELETE | Terminate MCP session |
+
+## Security
+
+- **OAuth 2.1 + PKCE**: Required for all authentication flows
+- **Delegated Permissions Only**: No app-only access
+- **Token Encryption**: At-rest encryption for session tokens
+- **PII Redaction**: Sensitive data filtered from logs
+- **Rate Limiting**: 100 requests/minute default
+- **Security Headers**: HSTS, CSP, X-Frame-Options via Helmet
+
+See [docs/security/threat-model.md](docs/security/threat-model.md) for full security analysis.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Open WebUI / Client                     │
+└─────────────────────────────┬───────────────────────────────┘
+                              │ MCP Protocol (Streamable HTTP)
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    m365-mcp-server                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────┐ │
+│  │ OAuth 2.1   │  │ MCP Handler │  │ Microsoft Graph      │ │
+│  │ + PKCE      │  │ (JSON-RPC)  │  │ Client               │ │
+│  └──────┬──────┘  └─────────────┘  └──────────┬───────────┘ │
+└─────────│────────────────────────────────────│──────────────┘
+          │                                    │
+          ▼                                    ▼
+┌──────────────────────┐            ┌─────────────────────────┐
+│  Azure AD / Entra ID │            │   Microsoft Graph API   │
+│  (Authorization)     │            │   (Data Access)         │
+└──────────────────────┘            └─────────────────────────┘
+```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AZURE_CLIENT_ID` | Yes | - | Azure AD app client ID |
+| `AZURE_CLIENT_SECRET` | Yes | - | Azure AD app client secret |
+| `AZURE_TENANT_ID` | Yes | - | Azure AD tenant ID |
+| `SESSION_SECRET` | Yes | - | Session encryption key (32+ chars) |
+| `MCP_SERVER_PORT` | No | 3000 | Server port |
+| `MCP_SERVER_BASE_URL` | No | http://localhost:3000 | Public URL for callbacks |
+| `REDIS_URL` | No | - | Redis URL for distributed sessions |
+| `LOG_LEVEL` | No | info | Log level (trace/debug/info/warn/error) |
+| `NODE_ENV` | No | development | Environment mode |
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+
+# Lint
+npm run lint
+
+# Type check
+npm run typecheck
+
+# Build
+npm run build
+```
+
+## MCP Registry
+
+This server is published to the MCP Registry. Add to your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "m365": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/m365-mcp-server"],
+      "env": {
+        "AZURE_CLIENT_ID": "your-client-id",
+        "AZURE_CLIENT_SECRET": "your-client-secret",
+        "AZURE_TENANT_ID": "your-tenant-id",
+        "SESSION_SECRET": "your-session-secret"
+      }
+    }
+  }
+}
+```
+
+## Documentation
+
+- [Azure AD App Registration](docs/entra-app-registration.md)
+- [Architecture Decision Record](docs/adr/0001-auth-openwebui.md)
+- [Security Threat Model](docs/security/threat-model.md)
+
+## Known Limitations
+
+- Maximum file download size: 10MB
+- SharePoint site listing requires search query (Graph API limitation)
+- Refresh tokens limited to 24 hours for SPA scenarios
+- No write operations (read-only by design)
+
+## License
+
+MIT
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+Please ensure all tests pass and the code follows the existing style.
