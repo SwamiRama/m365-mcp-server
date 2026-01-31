@@ -7,12 +7,11 @@ on:
 
 jobs:
   release:
-    name: Release
+    name: Build and Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
-      id-token: write
 
     steps:
       - name: Checkout
@@ -23,7 +22,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
@@ -33,11 +31,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -65,28 +58,10 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.VERSION }}
-            io.modelcontextprotocol.server.name=io.github.${{ github.repository_owner }}/m365-mcp-server
-
-      - name: Install mcp-publisher
-        run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
-
-      - name: Authenticate to MCP Registry
-        run: ./mcp-publisher login github-oidc
-
-      - name: Update server.json version
-        run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          jq --arg v "$VERSION" '.version = $v' server.json > server.tmp && mv server.tmp server.json
-
-      - name: Publish to MCP Registry
-        run: ./mcp-publisher publish
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
-          files: |
-            server.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
