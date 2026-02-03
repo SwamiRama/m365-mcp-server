@@ -29,6 +29,7 @@ yarn-error.log*
 
 # Test coverage
 coverage/
+*.profraw
 
 # Package manager locks (keep one)
 # Uncomment if using yarn:
