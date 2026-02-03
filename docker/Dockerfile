@@ -39,9 +39,9 @@ COPY --from=builder --chown=mcp:nodejs /app/package.json ./
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Health check
+# Health check (using Node.js since wget is not available in Alpine)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+    CMD node -e "require('http').get('http://localhost:3000/health',(r)=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
 
 # Switch to non-root user
 USER mcp
