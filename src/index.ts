@@ -12,6 +12,8 @@ import { oauthClient } from './auth/oauth.js';
 import { sessionManager, type UserSession, type TokenSet } from './auth/session.js';
 import { createGraphClient } from './graph/client.js';
 import { ToolExecutor, allToolDefinitions } from './tools/index.js';
+import { oauthRouter } from './oauth/routes.js';
+import { bearerAuthMiddleware } from './oauth/middleware.js';
 
 const app = express();
 
@@ -112,6 +114,18 @@ async function sessionMiddleware(
 }
 
 app.use(sessionMiddleware);
+
+// Bearer token authentication (OAuth 2.1)
+// This middleware validates Bearer tokens and loads the session
+// It runs AFTER session middleware so it can override cookie-based sessions
+app.use(bearerAuthMiddleware);
+
+// =============================================================================
+// OAuth 2.1 Authorization Server
+// =============================================================================
+
+// Mount OAuth routes (/.well-known/*, /authorize, /token, /register, /oauth/callback)
+app.use(oauthRouter);
 
 // =============================================================================
 // Health check
@@ -530,6 +544,8 @@ const server = app.listen(config.port, () => {
   );
   logger.info(`MCP endpoint: ${config.baseUrl}/mcp`);
   logger.info(`Login URL: ${config.baseUrl}/auth/login`);
+  logger.info(`OAuth 2.1 metadata: ${config.baseUrl}/.well-known/oauth-authorization-server`);
+  logger.info(`Dynamic registration: ${config.oauthAllowDynamicRegistration ? 'enabled' : 'disabled'}`);
 });
 
 // Graceful shutdown

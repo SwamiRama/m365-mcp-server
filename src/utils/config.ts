@@ -27,6 +27,19 @@ const configSchema = z.object({
 
   // Logging
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+
+  // OAuth 2.1 Authorization Server
+  oauthSigningKeyPrivate: z.string().optional(), // PEM or file path, auto-generated if not set
+  oauthSigningKeyPublic: z.string().optional(), // PEM or file path, auto-generated if not set
+  oauthAccessTokenLifetimeSecs: z.coerce.number().int().positive().default(900), // 15 minutes
+  oauthRefreshTokenLifetimeSecs: z.coerce.number().int().positive().default(86400), // 24 hours
+  oauthAuthCodeLifetimeSecs: z.coerce.number().int().positive().default(600), // 10 minutes
+  oauthAllowDynamicRegistration: z
+    .string()
+    .transform((val) => val === 'true' || val === '1')
+    .pipe(z.boolean())
+    .or(z.boolean())
+    .default(true),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -45,6 +58,13 @@ function loadConfig(): Config {
     rateLimitMaxRequests: process.env['RATE_LIMIT_MAX_REQUESTS'],
     graphApiTimeoutMs: process.env['GRAPH_API_TIMEOUT_MS'],
     logLevel: process.env['LOG_LEVEL'],
+    // OAuth 2.1 config
+    oauthSigningKeyPrivate: process.env['OAUTH_SIGNING_KEY_PRIVATE'],
+    oauthSigningKeyPublic: process.env['OAUTH_SIGNING_KEY_PUBLIC'],
+    oauthAccessTokenLifetimeSecs: process.env['OAUTH_ACCESS_TOKEN_LIFETIME_SECS'],
+    oauthRefreshTokenLifetimeSecs: process.env['OAUTH_REFRESH_TOKEN_LIFETIME_SECS'],
+    oauthAuthCodeLifetimeSecs: process.env['OAUTH_AUTH_CODE_LIFETIME_SECS'],
+    oauthAllowDynamicRegistration: process.env['OAUTH_ALLOW_DYNAMIC_REGISTRATION'],
   };
 
   const result = configSchema.safeParse(rawConfig);
