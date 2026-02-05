@@ -299,16 +299,13 @@ export class GraphClient {
   }): Promise<GraphSite[]> {
     const { search, top = 25 } = options;
 
-    let request = this.client.api('/sites');
+    // Microsoft Graph requires a search parameter to list sites
+    // Use '*' as wildcard to get all accessible sites when no search is provided
+    const searchQuery = search || '*';
 
-    if (search) {
-      // Search endpoint
-      request = this.client
-        .api('/sites')
-        .query({ search: search });
-    }
-
-    request = request
+    const request = this.client
+      .api('/sites')
+      .query({ search: searchQuery })
       .top(top)
       .select('id,name,displayName,webUrl,description');
 
