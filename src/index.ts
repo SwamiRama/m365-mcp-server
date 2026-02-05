@@ -294,6 +294,27 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // Check authentication - return 401 with OAuth metadata location if not authenticated
+  // This enables OAuth discovery for MCP clients like Open WebUI
+  if (!req.session?.tokens) {
+    res.setHeader(
+      'WWW-Authenticate',
+      `Bearer resource_metadata="${config.baseUrl}/.well-known/oauth-authorization-server"`
+    );
+    res.status(401).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32001,
+        message: 'Authentication required',
+        data: {
+          authorizationServer: `${config.baseUrl}/.well-known/oauth-authorization-server`,
+        },
+      },
+      id: null,
+    });
+    return;
+  }
+
   // Handle JSON-RPC request
   const jsonRpcRequest = req.body;
 
@@ -341,6 +362,19 @@ app.get('/mcp', (req: Request, res: Response): void => {
 
   if (!accept.includes('text/event-stream')) {
     res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  // Check authentication for SSE endpoint
+  if (!req.session?.tokens) {
+    res.setHeader(
+      'WWW-Authenticate',
+      `Bearer resource_metadata="${config.baseUrl}/.well-known/oauth-authorization-server"`
+    );
+    res.status(401).json({
+      error: 'Authentication required',
+      authorizationServer: `${config.baseUrl}/.well-known/oauth-authorization-server`,
+    });
     return;
   }
 
