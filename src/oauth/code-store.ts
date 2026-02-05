@@ -234,6 +234,25 @@ export async function createAuthorizationCode(params: {
 }
 
 /**
+ * Peek at an authorization code without consuming it
+ * Used to extract client_id when not provided in token request
+ */
+export async function peekAuthorizationCode(code: string): Promise<AuthorizationCode | null> {
+  const authCode = await store.get(code);
+
+  if (!authCode) {
+    return null;
+  }
+
+  // Check if already used or expired
+  if (authCode.used || Date.now() > authCode.expiresAt) {
+    return null;
+  }
+
+  return authCode;
+}
+
+/**
  * Consume an authorization code (single-use)
  */
 export async function consumeAuthorizationCode(code: string): Promise<AuthorizationCode | null> {

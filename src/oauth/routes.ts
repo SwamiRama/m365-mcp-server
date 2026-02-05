@@ -17,6 +17,7 @@ import {
 import {
   createAuthorizationCode,
   consumeAuthorizationCode,
+  peekAuthorizationCode,
   verifyCodeChallenge,
   storePendingAuthorization,
   getPendingAuthorization,
@@ -390,10 +391,22 @@ oauthRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<
 // =============================================================================
 
 oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> => {
-  const { grant_type } = req.body;
+  const { grant_type, code } = req.body;
 
   // Extract client credentials
-  const { clientId, clientSecret } = extractClientCredentials(req);
+  const credentials = extractClientCredentials(req);
+  let clientId = credentials.clientId;
+  const clientSecret = credentials.clientSecret;
+
+  // For authorization_code grant, client_id can be extracted from the code
+  // This supports clients like Open WebUI that don't send client_id in token request
+  if (!clientId && grant_type === 'authorization_code' && code) {
+    const authCode = await peekAuthorizationCode(code);
+    if (authCode) {
+      clientId = authCode.clientId;
+      req.log.debug({ clientId }, 'Extracted client_id from authorization code');
+    }
+  }
 
   if (!clientId) {
     sendTokenError(res, 'invalid_client', 'client_id is required');
