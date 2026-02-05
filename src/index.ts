@@ -17,6 +17,10 @@ import { bearerAuthMiddleware } from './oauth/middleware.js';
 
 const app = express();
 
+// Trust proxy - required when running behind reverse proxy (Azure Container Apps, nginx, etc.)
+// This ensures correct client IP detection for rate limiting and secure cookies
+app.set('trust proxy', true);
+
 // =============================================================================
 // Middleware
 // =============================================================================
