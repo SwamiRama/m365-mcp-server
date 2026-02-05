@@ -141,13 +141,16 @@ export async function registerClient(request: ClientRegistrationRequest): Promis
 
   // Generate credentials
   const clientId = generateClientId();
-  const clientSecretPlain = generateClientSecret();
-  const clientSecretHash = hashClientSecret(clientSecretPlain);
 
   // Defaults per OAuth 2.1
   const grantTypes = request.grant_types ?? ['authorization_code', 'refresh_token'];
   const responseTypes = request.response_types ?? ['code'];
-  const tokenEndpointAuthMethod = request.token_endpoint_auth_method ?? 'client_secret_post';
+  const tokenEndpointAuthMethod = request.token_endpoint_auth_method ?? 'none'; // Default to public client
+
+  // Only generate secret for confidential clients
+  const isPublicClient = tokenEndpointAuthMethod === 'none';
+  const clientSecretPlain = isPublicClient ? '' : generateClientSecret();
+  const clientSecretHash = isPublicClient ? '' : hashClientSecret(clientSecretPlain);
 
   const client: OAuthClient = {
     clientId,
@@ -163,19 +166,22 @@ export async function registerClient(request: ClientRegistrationRequest): Promis
 
   await store.set(clientId, client);
 
-  logger.info({ clientId, clientName: client.clientName }, 'Registered new OAuth client');
+  logger.info({ clientId, clientName: client.clientName, isPublicClient }, 'Registered new OAuth client');
 
-  return {
+  // Build response - only include secret for confidential clients
+  const response: ClientRegistrationResponse = {
     client_id: clientId,
-    client_secret: clientSecretPlain, // Only returned once during registration
+    client_secret: clientSecretPlain,
     client_name: client.clientName,
     redirect_uris: client.redirectUris,
     grant_types: grantTypes,
     response_types: responseTypes,
     token_endpoint_auth_method: tokenEndpointAuthMethod,
     client_id_issued_at: Math.floor(client.createdAt / 1000),
-    client_secret_expires_at: 0, // Never expires
+    client_secret_expires_at: isPublicClient ? 0 : 0, // 0 = never expires
   };
+
+  return response;
 }
 
 /**

@@ -121,6 +121,7 @@ export interface AuthorizationServerMetadata {
   registration_endpoint?: string;
   jwks_uri: string;
   response_types_supported: ResponseType[];
+  response_modes_supported?: ResponseMode[];
   grant_types_supported: GrantType[];
   token_endpoint_auth_methods_supported: TokenEndpointAuthMethod[];
   code_challenge_methods_supported: CodeChallengeMethod[];
@@ -151,7 +152,8 @@ export interface JWK {
 
 export type GrantType = 'authorization_code' | 'refresh_token';
 export type ResponseType = 'code';
-export type TokenEndpointAuthMethod = 'client_secret_post' | 'client_secret_basic';
+export type ResponseMode = 'query' | 'fragment';
+export type TokenEndpointAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none';
 export type CodeChallengeMethod = 'S256';
 
 export type TokenError =

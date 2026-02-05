@@ -20,6 +20,7 @@ export type {
   JWK,
   GrantType,
   ResponseType,
+  ResponseMode,
   TokenEndpointAuthMethod,
   CodeChallengeMethod,
   TokenError,

@@ -49,8 +49,9 @@ oauthRouter.get('/.well-known/oauth-authorization-server', (_req: Request, res: 
       : undefined,
     jwks_uri: `${config.baseUrl}/.well-known/jwks.json`,
     response_types_supported: ['code'],
+    response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
-    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
+    token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
     code_challenge_methods_supported: ['S256'],
     scopes_supported: ['openid', 'offline_access', 'mail.read', 'files.read'],
     service_documentation: 'https://github.com/anthropic/m365-mcp-server',
@@ -395,17 +396,32 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
   const { clientId, clientSecret } = extractClientCredentials(req);
 
   if (!clientId) {
-    sendTokenError(res, 'invalid_client', 'Client authentication required');
+    sendTokenError(res, 'invalid_client', 'client_id is required');
     return;
   }
 
-  // Authenticate client
-  const client = clientSecret
-    ? await authenticateClient(clientId, clientSecret)
-    : await getClient(clientId);
+  // Get client first to check auth method
+  const client = await getClient(clientId);
 
   if (!client) {
-    sendTokenError(res, 'invalid_client', 'Invalid client credentials');
+    sendTokenError(res, 'invalid_client', 'Unknown client');
+    return;
+  }
+
+  // Validate client authentication based on token_endpoint_auth_method
+  if (client.tokenEndpointAuthMethod === 'none') {
+    // Public client - no secret required, PKCE provides security
+    // This is common for SPAs and native apps like Open WebUI
+  } else if (clientSecret) {
+    // Confidential client with secret provided - verify it
+    const authenticated = await authenticateClient(clientId, clientSecret);
+    if (!authenticated) {
+      sendTokenError(res, 'invalid_client', 'Invalid client credentials');
+      return;
+    }
+  } else {
+    // Confidential client but no secret provided
+    sendTokenError(res, 'invalid_client', 'Client authentication required');
     return;
   }
 
