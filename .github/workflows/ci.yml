@@ -151,12 +151,15 @@ jobs:
           tags: |
             ghcr.io/${{ steps.repo.outputs.REPO_LC }}:latest
             ghcr.io/${{ steps.repo.outputs.REPO_LC }}:main-${{ github.sha }}
-            m365-mcp-server:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Tag image for Trivy scan (main branch)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker tag ghcr.io/${{ steps.repo.outputs.REPO_LC }}:latest m365-mcp-server:test
 
       - name: Scan Docker image
         uses: aquasecurity/trivy-action@master
