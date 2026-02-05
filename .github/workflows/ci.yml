@@ -118,6 +118,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           push: false
+          load: true  # Load image into local Docker daemon for Trivy scan
           tags: m365-mcp-server:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
