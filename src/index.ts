@@ -63,6 +63,7 @@ app.use(limiter);
 
 // Body parsing
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true })); // Required for OAuth token endpoint (application/x-www-form-urlencoded)
 app.use(cookieParser());
 
 // Correlation ID middleware
