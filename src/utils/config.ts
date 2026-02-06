@@ -25,6 +25,10 @@ const configSchema = z.object({
   // Timeouts
   graphApiTimeoutMs: z.coerce.number().int().positive().default(30000),
 
+  // File parsing
+  fileParseTimeoutMs: z.coerce.number().int().positive().default(30000),
+  fileParseMaxOutputKb: z.coerce.number().int().positive().default(500),
+
   // Logging
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
@@ -40,7 +44,42 @@ const configSchema = z.object({
     .pipe(z.boolean())
     .or(z.boolean())
     .default(true),
-});
+
+  // DCR security
+  oauthAllowedRedirectPatterns: z.string().optional(), // Comma-separated URL patterns
+})
+  .superRefine((data, ctx) => {
+    if (data.nodeEnv === 'production') {
+      if (!data.redisUrl) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['redisUrl'],
+          message: 'REDIS_URL is required in production (in-memory storage is not suitable)',
+        });
+      }
+      if (!data.oauthSigningKeyPrivate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['oauthSigningKeyPrivate'],
+          message: 'OAUTH_SIGNING_KEY_PRIVATE is required in production (ephemeral keys cause token invalidation on restart)',
+        });
+      }
+      if (!data.oauthSigningKeyPublic) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['oauthSigningKeyPublic'],
+          message: 'OAUTH_SIGNING_KEY_PUBLIC is required in production',
+        });
+      }
+      if (!data.baseUrl.startsWith('https://')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['baseUrl'],
+          message: 'MCP_SERVER_BASE_URL must use HTTPS in production',
+        });
+      }
+    }
+  });
 
 export type Config = z.infer<typeof configSchema>;
 
@@ -57,6 +96,8 @@ function loadConfig(): Config {
     rateLimitWindowMs: process.env['RATE_LIMIT_WINDOW_MS'],
     rateLimitMaxRequests: process.env['RATE_LIMIT_MAX_REQUESTS'],
     graphApiTimeoutMs: process.env['GRAPH_API_TIMEOUT_MS'],
+    fileParseTimeoutMs: process.env['FILE_PARSE_TIMEOUT_MS'],
+    fileParseMaxOutputKb: process.env['FILE_PARSE_MAX_OUTPUT_KB'],
     logLevel: process.env['LOG_LEVEL'],
     // OAuth 2.1 config
     oauthSigningKeyPrivate: process.env['OAUTH_SIGNING_KEY_PRIVATE'],
@@ -65,6 +106,7 @@ function loadConfig(): Config {
     oauthRefreshTokenLifetimeSecs: process.env['OAUTH_REFRESH_TOKEN_LIFETIME_SECS'],
     oauthAuthCodeLifetimeSecs: process.env['OAUTH_AUTH_CODE_LIFETIME_SECS'],
     oauthAllowDynamicRegistration: process.env['OAUTH_ALLOW_DYNAMIC_REGISTRATION'],
+    oauthAllowedRedirectPatterns: process.env['OAUTH_ALLOWED_REDIRECT_PATTERNS'],
   };
 
   const result = configSchema.safeParse(rawConfig);

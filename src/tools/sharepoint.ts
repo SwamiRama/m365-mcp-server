@@ -6,11 +6,17 @@ import {
   type GraphDriveItem,
 } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
+import { isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
+
+// Safe pattern for Graph API resource IDs (alphanumeric, hyphens, dots, underscores, commas, colons, exclamation marks)
+const graphIdPattern = /^[a-zA-Z0-9\-._,!:]+$/;
+const graphIdSchema = z.string().min(1).regex(graphIdPattern, 'Invalid resource ID format');
 
 // Input schemas for SharePoint/Files tools
 export const listSitesInputSchema = z.object({
   query: z
     .string()
+    .max(256)
     .optional()
     .describe('Search query to filter sites by name'),
 });
@@ -18,6 +24,7 @@ export const listSitesInputSchema = z.object({
 export const listDrivesInputSchema = z.object({
   site_id: z
     .string()
+    .regex(graphIdPattern, 'Invalid site ID format')
     .optional()
     .describe(
       "Site ID to list drives from. If not provided, lists the user's personal OneDrive."
@@ -25,12 +32,11 @@ export const listDrivesInputSchema = z.object({
 });
 
 export const listChildrenInputSchema = z.object({
-  drive_id: z
-    .string()
-    .min(1)
+  drive_id: graphIdSchema
     .describe('The ID of the drive to list items from'),
   item_id: z
     .string()
+    .regex(graphIdPattern, 'Invalid item ID format')
     .optional()
     .describe(
       'The ID of the folder to list children from. If not provided, lists root folder contents.'
@@ -38,8 +44,8 @@ export const listChildrenInputSchema = z.object({
 });
 
 export const getFileInputSchema = z.object({
-  drive_id: z.string().min(1).describe('The ID of the drive containing the file'),
-  item_id: z.string().min(1).describe('The ID of the file to retrieve'),
+  drive_id: graphIdSchema.describe('The ID of the drive containing the file'),
+  item_id: graphIdSchema.describe('The ID of the file to retrieve'),
 });
 
 export type ListSitesInput = z.infer<typeof listSitesInputSchema>;
@@ -237,6 +243,29 @@ export class SharePointTools {
           // Return text content directly
           result['content'] = contentResult.content.toString('utf-8');
           result['contentType'] = 'text';
+        } else if (isParsableMimeType(mimeType)) {
+          // Parse document formats (PDF, Office) to extract text
+          try {
+            const parsed = await parseFileContent(
+              contentResult.content,
+              mimeType,
+              item.name ?? 'unknown'
+            );
+            result['content'] = parsed.text;
+            result['contentType'] = 'parsed_text';
+            result['parsedFormat'] = parsed.format;
+            result['truncated'] = parsed.truncated;
+          } catch (parseErr) {
+            // Fallback to base64 if parsing fails
+            const parseMessage = parseErr instanceof Error ? parseErr.message : 'Unknown parsing error';
+            logger.warn(
+              { err: parseErr, mimeType, fileName: item.name },
+              'Document parsing failed, falling back to base64'
+            );
+            result['content'] = contentResult.content.toString('base64');
+            result['contentType'] = 'base64';
+            result['parseError'] = parseMessage;
+          }
         } else {
           // Return base64 encoded binary content
           result['content'] = contentResult.content.toString('base64');
@@ -314,7 +343,7 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_get_file',
     description:
-      'Get file metadata and content. Text files are returned as text, binary files as base64. Maximum size: 10MB.',
+      'Get file metadata and content. Text files are returned as text. PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) are automatically parsed to extract readable text. Other binary files are returned as base64. Maximum size: 10MB.',
     inputSchema: {
       type: 'object' as const,
       properties: {

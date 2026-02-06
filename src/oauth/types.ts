@@ -119,6 +119,7 @@ export interface AuthorizationServerMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
   registration_endpoint?: string;
+  revocation_endpoint?: string;
   jwks_uri: string;
   response_types_supported: ResponseType[];
   response_modes_supported?: ResponseMode[];

@@ -14,6 +14,7 @@ import { createGraphClient } from './graph/client.js';
 import { ToolExecutor, allToolDefinitions } from './tools/index.js';
 import { oauthRouter } from './oauth/routes.js';
 import { bearerAuthMiddleware } from './oauth/middleware.js';
+import { audit } from './utils/audit.js';
 
 const app = express();
 
@@ -32,14 +33,31 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'"],
         imgSrc: ["'self'", 'data:', 'https:'],
         connectSrc: ["'self'", 'https://graph.microsoft.com', 'https://login.microsoftonline.com'],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
       },
     },
     hsts: config.nodeEnv === 'production',
   })
 );
+
+// Permissions-Policy header (not built into Helmet v8)
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+// Cache-Control for sensitive endpoints
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/token') || req.path.startsWith('/auth/') || req.path.startsWith('/mcp')) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
+  next();
+});
 
 // CORS configuration
 app.use(
@@ -136,8 +154,29 @@ app.use(oauthRouter);
 // Health check
 // =============================================================================
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'healthy', version: '1.0.0' });
+app.get('/health', async (_req: Request, res: Response) => {
+  const checks: Record<string, { status: string; latencyMs?: number }> = {};
+
+  // Check Redis connectivity if configured
+  if (config.redisUrl) {
+    const start = Date.now();
+    try {
+      await sessionManager.getSession('health-check-probe');
+      checks['redis'] = { status: 'up', latencyMs: Date.now() - start };
+    } catch {
+      checks['redis'] = { status: 'down', latencyMs: Date.now() - start };
+    }
+  }
+
+  const allUp = Object.values(checks).every((c) => c.status === 'up');
+  const status = allUp ? 'healthy' : 'degraded';
+
+  res.status(allUp ? 200 : 503).json({
+    status,
+    version: '1.0.0',
+    uptime: Math.floor(process.uptime()),
+    checks,
+  });
 });
 
 // =============================================================================
@@ -214,7 +253,12 @@ app.get('/auth/callback', async (req: Request, res: Response): Promise<void> => 
 
     await sessionManager.saveSession(req.session);
 
-    req.log.info({ userId: tokenResult.userId }, 'Login successful');
+    audit({
+      event: 'auth.callback_success',
+      userId: tokenResult.userId,
+      userEmail: tokenResult.userEmail,
+      ip: req.ip,
+    }, 'User login successful');
 
     // Return success page or redirect
     res.send(`
@@ -244,6 +288,11 @@ app.get('/auth/callback', async (req: Request, res: Response): Promise<void> => 
 app.get('/auth/logout', async (req: Request, res: Response) => {
   try {
     if (req.session) {
+      audit({
+        event: 'auth.logout',
+        userId: req.session.userId,
+        ip: req.ip,
+      }, 'User logged out');
       await sessionManager.deleteSession(req.session.id);
     }
 
@@ -540,7 +589,12 @@ async function handleToolsCall(
   const graphClient = createGraphClient(currentTokens);
   const toolExecutor = new ToolExecutor(graphClient);
 
-  req.log.info({ toolName }, 'Executing tool');
+  audit({
+    event: 'tool.executed',
+    toolName,
+    userId: req.session?.userId,
+    ip: req.ip,
+  }, `Tool ${toolName} executed`);
 
   const result = await toolExecutor.execute(toolName, toolArgs);
 
@@ -572,36 +626,87 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // Start server
 // =============================================================================
 
-const server = app.listen(config.port, () => {
-  logger.info(
-    {
-      port: config.port,
-      baseUrl: config.baseUrl,
-      nodeEnv: config.nodeEnv,
-    },
-    `m365-mcp-server started`
-  );
-  logger.info(`MCP endpoint: ${config.baseUrl}/mcp`);
-  logger.info(`Login URL: ${config.baseUrl}/auth/login`);
-  logger.info(`OAuth 2.1 metadata: ${config.baseUrl}/.well-known/oauth-authorization-server`);
-  logger.info(`Dynamic registration: ${config.oauthAllowDynamicRegistration ? 'enabled' : 'disabled'}`);
-});
+// Startup checks
+async function runStartupChecks(): Promise<void> {
+  logger.info('Running startup checks...');
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
-  });
-});
+  // 1. Verify Redis connectivity if configured
+  if (config.redisUrl) {
+    try {
+      await sessionManager.getSession('startup-check');
+      logger.info('Redis connectivity: OK');
+    } catch (err) {
+      logger.error({ err }, 'Redis connectivity check failed');
+      throw new Error('Cannot connect to Redis - required for session storage');
+    }
+  } else if (config.nodeEnv === 'production') {
+    // This should be caught by config validation, but double-check
+    throw new Error('Redis is required in production');
+  } else {
+    logger.warn('Using in-memory session storage (not suitable for production)');
+  }
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+  // 2. Verify OAuth signing keys
+  if (!config.oauthSigningKeyPrivate && config.nodeEnv === 'production') {
+    throw new Error('OAUTH_SIGNING_KEY_PRIVATE is required in production');
+  }
+  if (!config.oauthSigningKeyPrivate) {
+    logger.warn('Using ephemeral OAuth signing keys - tokens will be invalidated on restart');
+  }
+
+  logger.info('Startup checks passed');
+}
+
+// Start server
+async function start(): Promise<void> {
+  await runStartupChecks();
+
+  const server = app.listen(config.port, () => {
+    logger.info(
+      {
+        port: config.port,
+        baseUrl: config.baseUrl,
+        nodeEnv: config.nodeEnv,
+      },
+      'm365-mcp-server started'
+    );
+    logger.info(`MCP endpoint: ${config.baseUrl}/mcp`);
+    logger.info(`Login URL: ${config.baseUrl}/auth/login`);
+    logger.info(`OAuth 2.1 metadata: ${config.baseUrl}/.well-known/oauth-authorization-server`);
+    logger.info(`Dynamic registration: ${config.oauthAllowDynamicRegistration ? 'enabled' : 'disabled'}`);
   });
+
+  // Graceful shutdown
+  const SHUTDOWN_TIMEOUT_MS = 30000;
+  let shuttingDown = false;
+
+  function gracefulShutdown(signal: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    logger.info({ signal }, 'Received shutdown signal, closing gracefully');
+
+    // Force exit after timeout
+    const forceTimer = setTimeout(() => {
+      logger.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forceTimer.unref();
+
+    server.close(() => {
+      logger.info('Server closed');
+      clearTimeout(forceTimer);
+      process.exit(0);
+    });
+  }
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}
+
+start().catch((err) => {
+  logger.fatal({ err }, 'Failed to start server');
+  process.exit(1);
 });
 
 export { app };

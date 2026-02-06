@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+tests
+scripts
+*.md
+.git
+.github
+.vscode
+.idea
+coverage
+.nyc_output

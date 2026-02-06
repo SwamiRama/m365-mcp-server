@@ -20,6 +20,7 @@ export const listMessagesInputSchema = z.object({
     .describe('Maximum number of messages to return (1-100)'),
   query: z
     .string()
+    .max(500)
     .optional()
     .describe(
       'OData filter query for messages (e.g., "from/emailAddress/address eq \'user@example.com\'")'

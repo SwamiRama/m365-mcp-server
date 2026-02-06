@@ -3,6 +3,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { config, GRAPH_SCOPES, getOAuthEndpoints } from '../utils/config.js';
 import { sessionManager } from '../auth/session.js';
 import { generatePKCEPair, generateState, generateNonce } from '../auth/pkce.js';
@@ -23,7 +24,7 @@ import {
   getPendingAuthorization,
   deletePendingAuthorization,
 } from './code-store.js';
-import { createRefreshToken, validateRefreshToken, rotateRefreshToken } from './token-store.js';
+import { createRefreshToken, validateRefreshToken, rotateRefreshToken, revokeRefreshToken } from './token-store.js';
 import type {
   AuthorizationServerMetadata,
   ClientRegistrationRequest,
@@ -48,6 +49,7 @@ oauthRouter.get('/.well-known/oauth-authorization-server', (_req: Request, res: 
     registration_endpoint: config.oauthAllowDynamicRegistration
       ? `${config.baseUrl}/register`
       : undefined,
+    revocation_endpoint: `${config.baseUrl}/revoke`,
     jwks_uri: `${config.baseUrl}/.well-known/jwks.json`,
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
@@ -73,7 +75,19 @@ oauthRouter.get('/.well-known/jwks.json', (_req: Request, res: Response) => {
 // Dynamic Client Registration (RFC 7591)
 // =============================================================================
 
-oauthRouter.post('/register', async (req: Request, res: Response): Promise<void> => {
+// Strict rate limit for client registration: 5 per hour per IP
+const dcrRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'too_many_requests',
+    error_description: 'Too many registration attempts. Try again later.',
+  },
+});
+
+oauthRouter.post('/register', dcrRateLimit, async (req: Request, res: Response): Promise<void> => {
   if (!config.oauthAllowDynamicRegistration) {
     res.status(403).json({
       error: 'registration_not_supported',
@@ -101,9 +115,41 @@ oauthRouter.post('/register', async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    // Validate redirect URIs against allowed patterns (if configured)
+    if (config.oauthAllowedRedirectPatterns) {
+      const patterns = config.oauthAllowedRedirectPatterns
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (patterns.length > 0) {
+        for (const uri of request.redirect_uris) {
+          if (!matchesAnyPattern(uri, patterns)) {
+            req.log.warn(
+              { event: 'dcr.rejected', redirectUri: uri, ip: req.ip },
+              'DCR rejected: redirect_uri does not match allowed patterns'
+            );
+            res.status(400).json({
+              error: 'invalid_redirect_uri',
+              error_description: `Redirect URI "${uri}" is not allowed by server policy`,
+            });
+            return;
+          }
+        }
+      }
+    }
+
     const response = await registerClient(request);
 
-    req.log.info({ clientId: response.client_id }, 'Client registered');
+    req.log.info(
+      {
+        event: 'oauth.client_registered',
+        clientId: response.client_id,
+        clientName: request.client_name,
+        redirectUris: request.redirect_uris,
+        ip: req.ip,
+      },
+      'New OAuth client registered'
+    );
 
     res.status(201).json(response);
   } catch (err) {
@@ -637,4 +683,60 @@ function sendTokenError(
     error,
     error_description: description,
   } as TokenErrorResponse);
+}
+
+// =============================================================================
+// Token Revocation Endpoint (RFC 7009)
+// =============================================================================
+
+oauthRouter.post('/revoke', async (req: Request, res: Response): Promise<void> => {
+  const { token, token_type_hint } = req.body;
+
+  if (!token || typeof token !== 'string') {
+    // Per RFC 7009, invalid tokens should still return 200
+    res.status(200).send();
+    return;
+  }
+
+  try {
+    if (token_type_hint === 'refresh_token' || !token_type_hint) {
+      // Try to revoke as refresh token
+      await revokeRefreshToken(token);
+    }
+
+    // Access tokens are JWTs and are stateless - they cannot be directly revoked
+    // They will expire naturally based on their exp claim
+    // For stronger revocation, the session can be deleted
+
+    req.log.info({ event: 'oauth.token_revoked', tokenTypeHint: token_type_hint }, 'Token revoked');
+
+    // RFC 7009: Always return 200 OK regardless of whether the token was valid
+    res.status(200).send();
+  } catch (err) {
+    req.log.error({ err }, 'Token revocation failed');
+    // Per RFC 7009, errors during revocation should still return 200
+    res.status(200).send();
+  }
+});
+
+// =============================================================================
+// Utility functions
+// =============================================================================
+
+/**
+ * Check if a URL matches any of the given glob-like patterns.
+ * Supports `*` as wildcard for matching characters within URL segments.
+ */
+function matchesAnyPattern(url: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => {
+    // Escape regex special chars, then convert * to regex wildcard
+    const regexStr = pattern
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^/]*');
+    try {
+      return new RegExp(`^${regexStr}$`).test(url);
+    } catch {
+      return false;
+    }
+  });
 }
