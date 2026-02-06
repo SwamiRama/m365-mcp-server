@@ -5,11 +5,13 @@ A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, pr
 ## Features
 
 - **Email Access**: List folders, search messages, read email content
-- **SharePoint/OneDrive**: Browse sites, drives, folders, and download files
+- **SharePoint/OneDrive**: Browse sites, drives, folders, and read file content
+- **Document Parsing**: Extracts readable text from PDF, Word, Excel, PowerPoint, CSV, and HTML files
 - **OAuth 2.1 + PKCE**: Secure authentication via Azure AD/Entra ID
 - **Delegated Permissions**: Users access only their authorized content
 - **Open WebUI Compatible**: Works with native MCP or MCPO proxy
-- **Production Ready**: Docker support, security hardening, structured logging
+- **Production Ready**: Docker support, security hardening, structured audit logging
+- **Token Revocation**: RFC 7009 compliant token revocation endpoint
 
 ## Quick Start
 
@@ -37,6 +39,10 @@ SESSION_SECRET=$(openssl rand -hex 32)
 # Optional
 LOG_LEVEL=info
 REDIS_URL=redis://localhost:6379
+
+# OAuth signing keys (required in production)
+# OAUTH_SIGNING_KEY_PRIVATE=<base64-encoded PEM>
+# OAUTH_SIGNING_KEY_PUBLIC=<base64-encoded PEM>
 ```
 
 ### 3. Run Locally
@@ -124,7 +130,7 @@ docker-compose --profile with-mcpo up -d
 | `sp_list_sites` | Search and list SharePoint sites |
 | `sp_list_drives` | List drives (OneDrive/document libraries) |
 | `sp_list_children` | List folder contents |
-| `sp_get_file` | Download file content (max 10MB) |
+| `sp_get_file` | Get file content with automatic document parsing (PDF, Word, Excel, PowerPoint → text). Max 10MB |
 
 ## API Endpoints
 
@@ -135,6 +141,7 @@ docker-compose --profile with-mcpo up -d
 | `/auth/callback` | GET | OAuth callback |
 | `/auth/logout` | GET | Logout and revoke session |
 | `/auth/status` | GET | Check authentication status |
+| `/revoke` | POST | Token revocation (RFC 7009) |
 | `/mcp` | POST | MCP JSON-RPC endpoint |
 | `/mcp` | GET | MCP SSE stream endpoint |
 | `/mcp` | DELETE | Terminate MCP session |
@@ -142,11 +149,15 @@ docker-compose --profile with-mcpo up -d
 ## Security
 
 - **OAuth 2.1 + PKCE**: Required for all authentication flows
-- **Delegated Permissions Only**: No app-only access
-- **Token Encryption**: At-rest encryption for session tokens
-- **PII Redaction**: Sensitive data filtered from logs
-- **Rate Limiting**: 100 requests/minute default
-- **Security Headers**: HSTS, CSP, X-Frame-Options via Helmet
+- **Delegated Permissions Only**: No app-only access, read-only Graph scopes
+- **Token Encryption**: AES-256-GCM encryption for session tokens at rest
+- **PII Redaction**: Sensitive data (tokens, emails, secrets) filtered from logs
+- **Structured Audit Logging**: Security events logged with correlation IDs
+- **Rate Limiting**: 100 req/min general, 5/hour for client registration
+- **Security Headers**: HSTS, CSP (no unsafe-inline), Permissions-Policy, X-Frame-Options via Helmet
+- **Input Validation**: Zod schemas + regex validation for all Graph API resource IDs
+- **DCR Protection**: Redirect URI pattern whitelist, rate limiting, audit logging
+- **Production Enforcement**: Config validation requires Redis, HTTPS, persistent signing keys
 
 See [docs/security/threat-model.md](docs/security/threat-model.md) for full security analysis.
 
@@ -182,10 +193,15 @@ See [docs/security/threat-model.md](docs/security/threat-model.md) for full secu
 | `AZURE_TENANT_ID` | Yes | - | Azure AD tenant ID |
 | `SESSION_SECRET` | Yes | - | Session encryption key (32+ chars) |
 | `MCP_SERVER_PORT` | No | 3000 | Server port |
-| `MCP_SERVER_BASE_URL` | No | http://localhost:3000 | Public URL for callbacks |
-| `REDIS_URL` | No | - | Redis URL for distributed sessions |
+| `MCP_SERVER_BASE_URL` | No | http://localhost:3000 | Public URL (HTTPS required in production) |
+| `REDIS_URL` | Prod | - | Redis URL (required in production) |
+| `OAUTH_SIGNING_KEY_PRIVATE` | Prod | - | RSA private key PEM (required in production) |
+| `OAUTH_SIGNING_KEY_PUBLIC` | Prod | - | RSA public key PEM (required in production) |
+| `OAUTH_ALLOWED_REDIRECT_PATTERNS` | No | - | Comma-separated URI patterns for DCR |
 | `LOG_LEVEL` | No | info | Log level (trace/debug/info/warn/error) |
 | `NODE_ENV` | No | development | Environment mode |
+| `FILE_PARSE_TIMEOUT_MS` | No | 30000 | Document parsing timeout |
+| `FILE_PARSE_MAX_OUTPUT_KB` | No | 500 | Max parsed text output size |
 
 ## Development
 
@@ -236,12 +252,29 @@ This server is published to the MCP Registry. Add to your MCP client:
 - [Architecture Decision Record](docs/adr/0001-auth-openwebui.md)
 - [Security Threat Model](docs/security/threat-model.md)
 
+## Supported Document Formats
+
+`sp_get_file` automatically extracts readable text from these formats:
+
+| Format | Extensions | Library |
+|--------|-----------|---------|
+| PDF | `.pdf` | pdf-parse |
+| Word | `.docx`, `.doc` | mammoth |
+| Excel | `.xlsx`, `.xls` | exceljs |
+| PowerPoint | `.pptx`, `.ppt` | Built-in ZIP/XML |
+| CSV | `.csv` | Built-in |
+| HTML | `.html` | Built-in |
+
+Other binary formats are returned as base64. Parsed text output is limited to 500KB by default.
+
 ## Known Limitations
 
 - Maximum file download size: 10MB
+- Parsed text output capped at 500KB (configurable via `FILE_PARSE_MAX_OUTPUT_KB`)
 - SharePoint site listing requires search query (Graph API limitation)
 - Refresh tokens limited to 24 hours for SPA scenarios
 - No write operations (read-only by design)
+- Access tokens (JWTs) are stateless and cannot be directly revoked (expire naturally)
 
 ## License
 
