@@ -15,6 +15,7 @@ import { ToolExecutor, allToolDefinitions } from './tools/index.js';
 import { oauthRouter } from './oauth/routes.js';
 import { bearerAuthMiddleware } from './oauth/middleware.js';
 import { audit } from './utils/audit.js';
+import { pingRedis, closeRedis } from './utils/redis.js';
 
 const app = express();
 
@@ -159,13 +160,11 @@ app.get('/health', async (_req: Request, res: Response) => {
 
   // Check Redis connectivity if configured
   if (config.redisUrl) {
-    const start = Date.now();
-    try {
-      await sessionManager.getSession('health-check-probe');
-      checks['redis'] = { status: 'up', latencyMs: Date.now() - start };
-    } catch {
-      checks['redis'] = { status: 'down', latencyMs: Date.now() - start };
-    }
+    const redisHealth = await pingRedis();
+    checks['redis'] = {
+      status: redisHealth.ok ? 'up' : 'down',
+      latencyMs: redisHealth.latencyMs,
+    };
   }
 
   const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -632,11 +631,10 @@ async function runStartupChecks(): Promise<void> {
 
   // 1. Verify Redis connectivity if configured
   if (config.redisUrl) {
-    try {
-      await sessionManager.getSession('startup-check');
-      logger.info('Redis connectivity: OK');
-    } catch (err) {
-      logger.error({ err }, 'Redis connectivity check failed');
+    const redisHealth = await pingRedis();
+    if (redisHealth.ok) {
+      logger.info({ latencyMs: redisHealth.latencyMs }, 'Redis connectivity: OK');
+    } else {
       throw new Error('Cannot connect to Redis - required for session storage');
     }
   } else if (config.nodeEnv === 'production') {
@@ -693,8 +691,9 @@ async function start(): Promise<void> {
     }, SHUTDOWN_TIMEOUT_MS);
     forceTimer.unref();
 
-    server.close(() => {
-      logger.info('Server closed');
+    server.close(async () => {
+      await closeRedis();
+      logger.info('Server and connections closed');
       clearTimeout(forceTimer);
       process.exit(0);
     });

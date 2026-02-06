@@ -3,9 +3,10 @@
  */
 
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
+import { getRedisClient } from '../utils/redis.js';
 import type { RefreshTokenRecord } from './types.js';
 
 // Storage interface
@@ -100,11 +101,8 @@ class RedisTokenStore implements TokenStore {
   private tokenPrefix = 'm365-mcp:oauth-refresh:';
   private sessionPrefix = 'm365-mcp:oauth-refresh-session:';
 
-  constructor(redisUrl: string) {
-    this.client = new Redis(redisUrl);
-    this.client.on('error', (err) => {
-      logger.error({ err }, 'Redis connection error (token store)');
-    });
+  constructor(client: Redis) {
+    this.client = client;
   }
 
   async get(tokenHash: string): Promise<RefreshTokenRecord | null> {
@@ -168,8 +166,9 @@ class RedisTokenStore implements TokenStore {
 }
 
 // Create store based on config
-const store: TokenStore = config.redisUrl
-  ? new RedisTokenStore(config.redisUrl)
+const redisClient = getRedisClient();
+const store: TokenStore = redisClient
+  ? new RedisTokenStore(redisClient)
   : new MemoryTokenStore();
 
 /**

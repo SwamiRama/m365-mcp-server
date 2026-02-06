@@ -3,9 +3,10 @@
  */
 
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
+import { getRedisClient } from '../utils/redis.js';
 import type { AuthorizationCode, PendingAuthorization } from './types.js';
 
 // Storage interface
@@ -77,11 +78,8 @@ class RedisCodeStore implements CodeStore {
   private codePrefix = 'm365-mcp:oauth-code:';
   private pendingPrefix = 'm365-mcp:oauth-pending:';
 
-  constructor(redisUrl: string) {
-    this.client = new Redis(redisUrl);
-    this.client.on('error', (err) => {
-      logger.error({ err }, 'Redis connection error (code store)');
-    });
+  constructor(client: Redis) {
+    this.client = client;
   }
 
   async get(code: string): Promise<AuthorizationCode | null> {
@@ -124,8 +122,9 @@ class RedisCodeStore implements CodeStore {
 }
 
 // Create store based on config
-const store: CodeStore = config.redisUrl
-  ? new RedisCodeStore(config.redisUrl)
+const redisClient = getRedisClient();
+const store: CodeStore = redisClient
+  ? new RedisCodeStore(redisClient)
   : new MemoryCodeStore();
 
 /**

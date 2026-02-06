@@ -3,9 +3,10 @@
  */
 
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
+import { getRedisClient } from '../utils/redis.js';
 import type { OAuthClient, ClientRegistrationRequest, ClientRegistrationResponse } from './types.js';
 
 // Storage interface
@@ -37,11 +38,8 @@ class RedisClientStore implements ClientStore {
   private client: Redis;
   private prefix = 'm365-mcp:oauth-client:';
 
-  constructor(redisUrl: string) {
-    this.client = new Redis(redisUrl);
-    this.client.on('error', (err) => {
-      logger.error({ err }, 'Redis connection error (client store)');
-    });
+  constructor(client: Redis) {
+    this.client = client;
   }
 
   async get(clientId: string): Promise<OAuthClient | null> {
@@ -66,8 +64,9 @@ class RedisClientStore implements ClientStore {
 }
 
 // Create store based on config
-const store: ClientStore = config.redisUrl
-  ? new RedisClientStore(config.redisUrl)
+const redisClient = getRedisClient();
+const store: ClientStore = redisClient
+  ? new RedisClientStore(redisClient)
   : new MemoryClientStore();
 
 /**

@@ -1,7 +1,8 @@
 import crypto from 'crypto';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
+import { getRedisClient } from '../utils/redis.js';
 
 export interface TokenSet {
   accessToken: string;
@@ -63,11 +64,8 @@ class RedisSessionStore implements SessionStore {
   private client: Redis;
   private prefix = 'm365-mcp:session:';
 
-  constructor(redisUrl: string) {
-    this.client = new Redis(redisUrl);
-    this.client.on('error', (err) => {
-      logger.error({ err }, 'Redis connection error');
-    });
+  constructor(client: Redis) {
+    this.client = client;
   }
 
   async get(sessionId: string): Promise<UserSession | null> {
@@ -95,8 +93,9 @@ class RedisSessionStore implements SessionStore {
 }
 
 // Create store based on config
-const store: SessionStore = config.redisUrl
-  ? new RedisSessionStore(config.redisUrl)
+const redisClient = getRedisClient();
+const store: SessionStore = redisClient
+  ? new RedisSessionStore(redisClient)
   : new MemorySessionStore();
 
 // Encryption for sensitive session data
