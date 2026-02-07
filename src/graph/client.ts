@@ -202,11 +202,12 @@ export class GraphClient {
 
   // === Mail Operations ===
 
-  async listMailFolders(): Promise<GraphMailFolder[]> {
+  async listMailFolders(userId?: string): Promise<GraphMailFolder[]> {
+    const base = userId ? `/users/${userId}` : '/me';
     const result = await this.executeWithRetry(
       () =>
         this.client
-          .api('/me/mailFolders')
+          .api(`${base}/mailFolders`)
           .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
           .get(),
       'listMailFolders'
@@ -222,12 +223,14 @@ export class GraphClient {
     filter?: string;
     select?: string[];
     orderBy?: string;
+    userId?: string;
   }): Promise<{ messages: GraphMessage[]; nextLink?: string }> {
-    const { folderId, top = 25, skip, filter, select, orderBy } = options;
+    const { folderId, top = 25, skip, filter, select, orderBy, userId } = options;
 
+    const base = userId ? `/users/${userId}` : '/me';
     const endpoint = folderId
-      ? `/me/mailFolders/${folderId}/messages`
-      : '/me/messages';
+      ? `${base}/mailFolders/${folderId}/messages`
+      : `${base}/messages`;
 
     let request = this.client.api(endpoint);
 
@@ -261,7 +264,8 @@ export class GraphClient {
 
   async getMessage(
     messageId: string,
-    includeBody: boolean = false
+    includeBody: boolean = false,
+    userId?: string
   ): Promise<GraphMessage> {
     const selectFields = [
       'id',
@@ -281,10 +285,11 @@ export class GraphClient {
       selectFields.push('body');
     }
 
+    const base = userId ? `/users/${userId}` : '/me';
     return this.executeWithRetry(
       () =>
         this.client
-          .api(`/me/messages/${messageId}`)
+          .api(`${base}/messages/${messageId}`)
           .select(selectFields.join(','))
           .get(),
       'getMessage'

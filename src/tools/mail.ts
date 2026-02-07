@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { GraphClient, type GraphMessage, type GraphMailFolder } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
 
+// Shared mailbox schema — email address or Graph user ID
+const mailboxSchema = z.string().min(1).max(256)
+  .describe('Email address or user ID of a shared mailbox. Omit to use your personal mailbox.');
+
 // Input schemas for mail tools
 export const listMessagesInputSchema = z.object({
   folder: z
@@ -30,6 +34,7 @@ export const listMessagesInputSchema = z.object({
     .datetime()
     .optional()
     .describe('Filter messages received after this ISO 8601 datetime'),
+  mailbox: mailboxSchema.optional(),
 });
 
 export const getMessageInputSchema = z.object({
@@ -39,9 +44,12 @@ export const getMessageInputSchema = z.object({
     .optional()
     .default(false)
     .describe('Whether to include the full message body (HTML/text)'),
+  mailbox: mailboxSchema.optional(),
 });
 
-export const listFoldersInputSchema = z.object({});
+export const listFoldersInputSchema = z.object({
+  mailbox: mailboxSchema.optional(),
+});
 
 export type ListMessagesInput = z.infer<typeof listMessagesInputSchema>;
 export type GetMessageInput = z.infer<typeof getMessageInputSchema>;
@@ -130,6 +138,7 @@ export class MailTools {
       top: validated.top,
       filter,
       orderBy: 'receivedDateTime desc',
+      userId: validated.mailbox,
     });
 
     return {
@@ -152,7 +161,8 @@ export class MailTools {
 
     const message = await this.graphClient.getMessage(
       validated.message_id,
-      validated.include_body
+      validated.include_body,
+      validated.mailbox
     );
 
     return formatMessage(message, validated.include_body);
@@ -161,10 +171,11 @@ export class MailTools {
   /**
    * List mail folders
    */
-  async listFolders(_input: ListFoldersInput): Promise<object> {
-    logger.debug('Listing mail folders');
+  async listFolders(input: ListFoldersInput): Promise<object> {
+    const validated = listFoldersInputSchema.parse(input);
+    logger.debug({ mailbox: validated.mailbox }, 'Listing mail folders');
 
-    const folders = await this.graphClient.listMailFolders();
+    const folders = await this.graphClient.listMailFolders(validated.mailbox);
 
     return {
       folders: folders.map(formatFolder),
@@ -178,7 +189,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_list_messages',
     description:
-      'List email messages from a Microsoft 365 mailbox. Returns subject, sender, date, and preview. Use mail_get_message for full content.',
+      'List email messages from a Microsoft 365 mailbox. Returns subject, sender, date, and preview. Supports shared mailboxes via the mailbox parameter. Use mail_get_message for full content.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -203,13 +214,17 @@ export const mailToolDefinitions = [
           format: 'date-time',
           description: 'Filter messages received after this ISO 8601 datetime',
         },
+        mailbox: {
+          type: 'string',
+          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+        },
       },
     },
   },
   {
     name: 'mail_get_message',
     description:
-      'Get the full details of a specific email message by ID, including the full body if requested.',
+      'Get the full details of a specific email message by ID, including the full body if requested. Supports shared mailboxes via the mailbox parameter.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -221,6 +236,10 @@ export const mailToolDefinitions = [
           type: 'boolean',
           description: 'Whether to include the full message body (HTML/text). Default: false',
         },
+        mailbox: {
+          type: 'string',
+          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+        },
       },
       required: ['message_id'],
     },
@@ -228,10 +247,15 @@ export const mailToolDefinitions = [
   {
     name: 'mail_list_folders',
     description:
-      'List all mail folders in the Microsoft 365 mailbox with unread/total message counts.',
+      'List all mail folders in a Microsoft 365 mailbox with unread/total message counts. Supports shared mailboxes via the mailbox parameter.',
     inputSchema: {
       type: 'object' as const,
-      properties: {},
+      properties: {
+        mailbox: {
+          type: 'string',
+          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+        },
+      },
     },
   },
 ];

@@ -129,6 +129,7 @@ export const GRAPH_SCOPES = [
   'offline_access',
   'https://graph.microsoft.com/User.Read',
   'https://graph.microsoft.com/Mail.Read',
+  'https://graph.microsoft.com/Mail.Read.Shared',
   'https://graph.microsoft.com/Files.Read',
   'https://graph.microsoft.com/Sites.Read.All',
 ];
