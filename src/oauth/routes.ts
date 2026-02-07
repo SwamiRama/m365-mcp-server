@@ -725,14 +725,17 @@ oauthRouter.post('/revoke', async (req: Request, res: Response): Promise<void> =
 
 /**
  * Check if a URL matches any of the given glob-like patterns.
- * Supports `*` as wildcard for matching characters within URL segments.
+ * Supports `**` for multi-segment wildcard (any characters including `/`)
+ * and `*` for single-segment wildcard (any characters except `/`).
  */
 function matchesAnyPattern(url: string, patterns: string[]): boolean {
   return patterns.some((pattern) => {
-    // Escape regex special chars, then convert * to regex wildcard
+    // Escape regex special chars (except *), then convert glob wildcards
     const regexStr = pattern
       .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '[^/]*');
+      .replace(/\*\*/g, '@@GLOBSTAR@@')
+      .replace(/\*/g, '[^/]*')
+      .replace(/@@GLOBSTAR@@/g, '.*');
     try {
       return new RegExp(`^${regexStr}$`).test(url);
     } catch {

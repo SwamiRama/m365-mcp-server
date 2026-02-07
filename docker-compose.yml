@@ -1,0 +1,70 @@
+# =============================================================================
+# Local Development Docker Compose
+# =============================================================================
+# Usage:
+#   1. Run scripts/setup-local-dev.sh to generate signing keys and .env
+#   2. Add your Azure AD credentials to .env
+#   3. docker compose up --build
+#
+# This file is for local functional testing. For production, see docker/docker-compose.yml.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Microsoft 365 MCP Server
+  # ---------------------------------------------------------------------------
+  m365-mcp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: m365-mcp-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MCP_SERVER_BASE_URL=http://localhost:3000
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+      - OAUTH_ALLOW_DYNAMIC_REGISTRATION=true
+      - OAUTH_ALLOWED_REDIRECT_PATTERNS=http://localhost:**,http://127.0.0.1:**
+    networks:
+      - mcp-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health',(r)=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: m365-mcp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  redis-data:

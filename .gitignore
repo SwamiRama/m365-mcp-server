@@ -43,6 +43,7 @@ temp/
 # Secrets (never commit these)
 *.pem
 *.key
+.keys/
 secrets/
 credentials.json
 

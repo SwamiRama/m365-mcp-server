@@ -329,12 +329,14 @@ app.get('/auth/status', (req: Request, res: Response): void => {
 // MCP Protocol Handler (Streamable HTTP)
 // =============================================================================
 
+const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+
 // MCP endpoint
 app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
   const protocolVersion = req.headers['mcp-protocol-version'] as string;
 
   // Validate protocol version (allow missing for backwards compatibility)
-  if (protocolVersion && !['2025-11-25', '2025-03-26', '2024-11-05'].includes(protocolVersion)) {
+  if (protocolVersion && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     res.status(400).json({
       jsonrpc: '2.0',
       error: { code: -32600, message: 'Unsupported protocol version' },
@@ -391,14 +393,13 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
       id: jsonRpcRequest.id,
     });
   } catch (err) {
-    const error = err instanceof Error ? err : new Error('Unknown error');
     req.log.error({ err, method: jsonRpcRequest.method }, 'MCP request failed');
 
     res.status(500).json({
       jsonrpc: '2.0',
       error: {
         code: -32603,
-        message: error.message,
+        message: 'Internal server error',
       },
       id: jsonRpcRequest.id,
     });
@@ -505,8 +506,15 @@ async function handleInitialize(
   params?: Record<string, unknown>
 ): Promise<object> {
   const clientInfo = params?.['clientInfo'] as { name?: string; version?: string } | undefined;
+  const clientVersion = params?.['protocolVersion'] as string | undefined;
 
-  req.log.info({ clientInfo }, 'MCP initialization requested');
+  req.log.info({ clientInfo, clientVersion }, 'MCP initialization requested');
+
+  // Negotiate protocol version: pick the client's version if we support it, else our latest
+  const negotiatedVersion =
+    clientVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(clientVersion)
+      ? clientVersion
+      : SUPPORTED_PROTOCOL_VERSIONS[0];
 
   // Create or get session
   let session = req.session;
@@ -516,7 +524,7 @@ async function handleInitialize(
   }
 
   return {
-    protocolVersion: '2025-11-25',
+    protocolVersion: negotiatedVersion,
     capabilities: {
       tools: { listChanged: false },
       resources: { subscribe: false, listChanged: false },
@@ -549,63 +557,86 @@ async function handleToolsCall(
   req: Request,
   params?: Record<string, unknown>
 ): Promise<object> {
-  const toolName = params?.['name'] as string;
-  const toolArgs = (params?.['arguments'] as Record<string, unknown>) ?? {};
+  try {
+    const toolName = params?.['name'] as string;
+    const toolArgs = (params?.['arguments'] as Record<string, unknown>) ?? {};
 
-  if (!toolName) {
-    throw new Error('Tool name is required');
-  }
+    if (!toolName) {
+      throw new Error('Tool name is required');
+    }
 
-  // Check authentication
-  if (!req.session?.tokens) {
-    throw new Error(
-      `Authentication required. Please visit ${config.baseUrl}/auth/login to sign in with Microsoft 365.`
-    );
-  }
-
-  // Check if tokens need refresh
-  const tokens = sessionManager.getDecryptedTokens(req.session);
-  if (!tokens) {
-    throw new Error('Session tokens invalid - please re-authenticate');
-  }
-
-  let currentTokens: TokenSet = tokens;
-
-  if (sessionManager.tokensNeedRefresh(tokens)) {
-    req.log.info('Refreshing tokens');
-    try {
-      currentTokens = await oauthClient.refreshTokens(req.session);
-      await sessionManager.updateTokens(req.session.id, currentTokens);
-    } catch (err) {
-      req.log.warn({ err }, 'Token refresh failed - re-authentication required');
+    // Check authentication
+    if (!req.session?.tokens) {
       throw new Error(
-        `Session expired. Please visit ${config.baseUrl}/auth/login to sign in again.`
+        `Authentication required. Please visit ${config.baseUrl}/auth/login to sign in with Microsoft 365.`
       );
     }
+
+    // Check if tokens need refresh
+    const tokens = sessionManager.getDecryptedTokens(req.session);
+    if (!tokens) {
+      throw new Error('Session tokens invalid - please re-authenticate');
+    }
+
+    let currentTokens: TokenSet = tokens;
+
+    if (sessionManager.tokensNeedRefresh(tokens)) {
+      req.log.info('Refreshing tokens');
+      try {
+        currentTokens = await oauthClient.refreshTokens(req.session);
+        await sessionManager.updateTokens(req.session.id, currentTokens);
+      } catch (err) {
+        req.log.warn({ err }, 'Token refresh failed - re-authentication required');
+        throw new Error(
+          `Session expired. Please visit ${config.baseUrl}/auth/login to sign in again.`
+        );
+      }
+    }
+
+    // Create Graph client and tool executor
+    const graphClient = createGraphClient(currentTokens);
+    const toolExecutor = new ToolExecutor(graphClient);
+
+    audit({
+      event: 'tool.executed',
+      toolName,
+      userId: req.session?.userId,
+      ip: req.ip,
+    }, `Tool ${toolName} executed`);
+
+    const result = await toolExecutor.execute(toolName, toolArgs);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+      isError: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { statusCode?: number }).statusCode;
+    const apiCode = (err as { code?: string }).code;
+    const toolName = params?.['name'] as string | undefined;
+
+    req.log.warn({ err: err instanceof Error ? err : { message: String(err) }, toolName, statusCode: code, apiCode }, 'Tool execution failed');
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            error: message,
+            code: apiCode ?? undefined,
+            statusCode: code ?? undefined,
+          }),
+        },
+      ],
+      isError: true,
+    };
   }
-
-  // Create Graph client and tool executor
-  const graphClient = createGraphClient(currentTokens);
-  const toolExecutor = new ToolExecutor(graphClient);
-
-  audit({
-    event: 'tool.executed',
-    toolName,
-    userId: req.session?.userId,
-    ip: req.ip,
-  }, `Tool ${toolName} executed`);
-
-  const result = await toolExecutor.execute(toolName, toolArgs);
-
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify(result, null, 2),
-      },
-    ],
-    isError: false,
-  };
 }
 
 // =============================================================================

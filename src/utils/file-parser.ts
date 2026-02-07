@@ -72,8 +72,8 @@ export async function parseFileContent(
       `File parsing timed out after ${timeoutMs}ms`
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown parsing error';
-    logger.warn({ err, fileName, mimeType }, 'File parsing failed');
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ err: err instanceof Error ? err : { message: String(err) }, fileName, mimeType }, 'File parsing failed');
     throw new Error(`Failed to parse ${fileName}: ${message}`);
   }
 
@@ -124,8 +124,9 @@ async function parseByFormat(
  * Parse PDF to text using pdf-parse.
  */
 async function parsePdf(buffer: Buffer): Promise<string> {
-  // pdf-parse uses CommonJS export = syntax
-  const pdfParse = (await import('pdf-parse')) as unknown as (
+  // pdf-parse uses CommonJS export = syntax — handle both ESM default and CJS shapes
+  const pdfParseModule = await import('pdf-parse');
+  const pdfParse = ((pdfParseModule as any).default ?? pdfParseModule) as unknown as (
     dataBuffer: Buffer,
     options?: { max?: number }
   ) => Promise<{ text: string }>;
@@ -157,7 +158,8 @@ async function parseDocx(buffer: Buffer, fileName: string): Promise<string> {
  * Formats each sheet as a tab-separated table.
  */
 async function parseExcel(buffer: Buffer): Promise<string> {
-  const ExcelJS = await import('exceljs');
+  const ExcelJSModule = await import('exceljs');
+  const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
   const workbook = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await workbook.xlsx.load(buffer as any);
@@ -236,7 +238,7 @@ async function parsePptx(buffer: Buffer, fileName: string): Promise<string> {
     return slideTexts.join('\n\n');
   } catch (err) {
     logger.warn(
-      { err, fileName },
+      { err: err instanceof Error ? err : { message: String(err) }, fileName },
       'PPTX extraction failed'
     );
     throw err;
