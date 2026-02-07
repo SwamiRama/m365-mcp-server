@@ -149,19 +149,22 @@ const tenantConfig = {
 };
 ```
 
-### Delegated Permissions (Minimal Set)
+### Delegated Permissions
 
-| Permission | Purpose | Type |
-|------------|---------|------|
-| `openid` | OIDC sign-in | OIDC |
-| `offline_access` | Refresh tokens | OIDC |
-| `User.Read` | User profile | Delegated |
-| `Mail.Read` | Read user's mail | Delegated |
-| `Files.Read` | Read user's files | Delegated |
+| Permission | Purpose | Type | Admin Consent |
+|------------|---------|------|---------------|
+| `openid` | OIDC sign-in | OIDC | No |
+| `offline_access` | Refresh tokens | OIDC | No |
+| `User.Read` | User profile | Delegated | No |
+| `Mail.Read` | Read user's mail | Delegated | No |
+| `Mail.Read.Shared` | Read shared mailbox mail | Delegated | **Yes** |
+| `Files.Read` | Read user's files | Delegated | No |
+| `Sites.Read.All` | Read SharePoint sites | Delegated | No |
 
-**Not using `Files.Read.All` or `Sites.Read.All`** because:
-- `Files.Read` provides access to files user can access (OneDrive + shared)
-- Broader scopes require admin consent and exceed least privilege
+**Scope justification**:
+- `Mail.Read.Shared` enables shared mailbox access — requires admin consent; Graph API enforces mailbox-level delegation server-side
+- `Sites.Read.All` required for listing SharePoint sites via `/sites?search=` endpoint
+- Not using `Files.Read.All` — `Files.Read` provides access to files user can access (OneDrive + shared)
 
 ## Consequences
 

@@ -4,7 +4,7 @@ A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, pr
 
 ## Features
 
-- **Email Access**: List folders, search messages, read email content
+- **Email Access**: List folders, search messages, read email content (including shared mailboxes)
 - **SharePoint/OneDrive**: Browse sites, drives, folders, and read file content
 - **Document Parsing**: Extracts readable text from PDF, Word, Excel, PowerPoint, CSV, and HTML files
 - **OAuth 2.1 + PKCE**: Secure authentication via Azure AD/Entra ID
@@ -19,7 +19,7 @@ A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, pr
 
 Follow [docs/entra-app-registration.md](docs/entra-app-registration.md) to create an Azure AD app registration with these permissions:
 - `openid`, `offline_access` (OIDC)
-- `User.Read`, `Mail.Read`, `Files.Read` (Microsoft Graph)
+- `User.Read`, `Mail.Read`, `Mail.Read.Shared`, `Files.Read`, `Sites.Read.All` (Microsoft Graph)
 
 ### 2. Configuration
 
@@ -119,9 +119,11 @@ docker-compose --profile with-mcpo up -d
 
 | Tool | Description |
 |------|-------------|
-| `mail_list_messages` | List messages with optional filters |
-| `mail_get_message` | Get full message details |
-| `mail_list_folders` | List mail folders |
+| `mail_list_messages` | List messages with optional filters (supports shared mailboxes) |
+| `mail_get_message` | Get full message details (supports shared mailboxes) |
+| `mail_list_folders` | List mail folders (supports shared mailboxes) |
+
+All email tools accept an optional `mailbox` parameter (email address or user ID) to access shared mailboxes. Omit to use your personal mailbox. Requires `Mail.Read.Shared` permission with admin consent.
 
 ### SharePoint/OneDrive Tools
 
@@ -149,7 +151,7 @@ docker-compose --profile with-mcpo up -d
 ## Security
 
 - **OAuth 2.1 + PKCE**: Required for all authentication flows
-- **Delegated Permissions Only**: No app-only access, read-only Graph scopes
+- **Delegated Permissions Only**: No app-only access, read-only Graph scopes (`Mail.Read.Shared` requires admin consent)
 - **Token Encryption**: AES-256-GCM encryption for session tokens at rest
 - **PII Redaction**: Sensitive data (tokens, emails, secrets) filtered from logs
 - **Structured Audit Logging**: Security events logged with correlation IDs

@@ -94,13 +94,15 @@ export AZURE_CLIENT_SECRET="your-secret-value-here"
 
 ### Required Permissions
 
-| Permission | Category | Description |
-|------------|----------|-------------|
-| `openid` | OpenID Connect | Sign users in |
-| `offline_access` | OpenID Connect | Maintain access (refresh tokens) |
-| `User.Read` | User | Read user profile |
-| `Mail.Read` | Mail | Read user mail |
-| `Files.Read` | Files | Read user files |
+| Permission | Category | Description | Admin Consent |
+|------------|----------|-------------|---------------|
+| `openid` | OpenID Connect | Sign users in | No |
+| `offline_access` | OpenID Connect | Maintain access (refresh tokens) | No |
+| `User.Read` | User | Read user profile | No |
+| `Mail.Read` | Mail | Read user mail | No |
+| `Mail.Read.Shared` | Mail | Read shared mailbox mail | **Yes** |
+| `Files.Read` | Files | Read user files | No |
+| `Sites.Read.All` | Sites | Read SharePoint sites | No |
 
 ### Adding Permissions
 
@@ -109,7 +111,9 @@ Search and add each permission:
 2. Search: `offline_access` → Check → Add permissions
 3. Search: `User.Read` → Check → Add permissions
 4. Search: `Mail.Read` → Check → Add permissions
-5. Search: `Files.Read` → Check → Add permissions
+5. Search: `Mail.Read.Shared` → Check → Add permissions
+6. Search: `Files.Read` → Check → Add permissions
+7. Search: `Sites.Read.All` → Check → Add permissions
 
 ### Permission Summary
 
@@ -119,18 +123,20 @@ After adding, your permissions should look like:
 |-----|------------|------|--------|
 | Microsoft Graph | Files.Read | Delegated | ⏳ Not granted |
 | Microsoft Graph | Mail.Read | Delegated | ⏳ Not granted |
+| Microsoft Graph | Mail.Read.Shared | Delegated | ⏳ Not granted |
+| Microsoft Graph | Sites.Read.All | Delegated | ⏳ Not granted |
 | Microsoft Graph | offline_access | Delegated | ⏳ Not granted |
 | Microsoft Graph | openid | Delegated | ⏳ Not granted |
 | Microsoft Graph | User.Read | Delegated | ✅ Granted |
 
-### Admin Consent (Optional)
+### Admin Consent (Required)
 
-For single-tenant deployments, you can grant admin consent for all users:
+Admin consent is **required** for `Mail.Read.Shared` (shared mailbox access). For single-tenant deployments, grant admin consent for all users:
 
 1. Click **Grant admin consent for {organization}**
 2. Confirm by clicking **Yes**
 
-> **Note**: Without admin consent, each user will be prompted to consent on first login.
+> **Note**: Without admin consent, `Mail.Read.Shared` will not be available and shared mailbox access will fail. Other permissions can work with individual user consent.
 
 ## Step 5: Verify Configuration
 
@@ -182,12 +188,12 @@ Token:         https://login.microsoftonline.com/common/oauth2/v2.0/token
 When requesting authorization, use these scope strings:
 
 ```
-openid offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Files.Read
+openid offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.Read.Shared https://graph.microsoft.com/Files.Read https://graph.microsoft.com/Sites.Read.All
 ```
 
 Or in URL-encoded format:
 ```
-scope=openid%20offline_access%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read%20https%3A%2F%2Fgraph.microsoft.com%2FFiles.Read
+scope=openid%20offline_access%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read.Shared%20https%3A%2F%2Fgraph.microsoft.com%2FFiles.Read%20https%3A%2F%2Fgraph.microsoft.com%2FSites.Read.All
 ```
 
 ## PKCE Requirements

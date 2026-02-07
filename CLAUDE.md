@@ -11,6 +11,7 @@ Open WebUI (OAuth Client) → MCP Server (Auth + Resource Server) → Azure AD (
 ## Wichtige Dateien
 - `src/oauth/` - OAuth 2.1 Implementation (DCR, PKCE, JWT)
 - `src/graph/client.ts` - Microsoft Graph API Client
+- `src/tools/mail.ts` - Mail Tools (inkl. Shared Mailbox Support)
 - `src/tools/sharepoint.ts` - SharePoint/OneDrive Tools
 - `src/utils/config.ts` - Konfiguration und Graph Scopes
 

@@ -39,6 +39,7 @@ This document outlines the security threats, mitigations, and residual risks for
 | Session Data | MEDIUM | User session state including encrypted tokens |
 | Client Secret | CRITICAL | Azure AD application credential |
 | User Email Content | HIGH | Email messages accessed via Graph API |
+| Shared Mailbox Content | HIGH | Shared mailbox messages accessed via Graph API (requires `Mail.Read.Shared` + admin consent) |
 | User Files | HIGH | OneDrive/SharePoint files accessed via Graph API |
 
 ## Threats and Mitigations
@@ -204,6 +205,16 @@ This document outlines the security threats, mitigations, and residual risks for
   - ✅ No shared token cache between users
 - **Residual Risk**: NONE (enforced by Graph)
 
+#### T6.3: Shared Mailbox Access Abuse
+- **Risk**: MEDIUM
+- **Attack Vector**: User accesses shared mailbox they are not authorized for via `mailbox` parameter
+- **Mitigations**:
+  - ✅ `Mail.Read.Shared` requires admin consent — admin controls which users have the permission
+  - ✅ Graph API enforces mailbox-level permissions server-side (user must be a member/delegate of the shared mailbox)
+  - ✅ Delegated permissions — token is scoped to the authenticated user's actual access rights
+  - ✅ Input validated via Zod schema (string, 1-256 chars)
+- **Residual Risk**: LOW (Graph API enforces mailbox delegation, returns 403 for unauthorized access)
+
 ## Security Controls Summary
 
 ### Implemented Controls
@@ -274,5 +285,5 @@ This document outlines the security threats, mitigations, and residual risks for
 
 ---
 
-*Last Updated: 2026-01-31*
-*Version: 1.0.0*
+*Last Updated: 2026-02-07*
+*Version: 1.1.0*
