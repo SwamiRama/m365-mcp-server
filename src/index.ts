@@ -586,7 +586,10 @@ async function handleToolsCall(
         currentTokens = await oauthClient.refreshTokens(req.session);
         await sessionManager.updateTokens(req.session.id, currentTokens);
       } catch (err) {
-        req.log.warn({ err }, 'Token refresh failed - re-authentication required');
+        req.log.warn(
+          { err: err instanceof Error ? err : { message: String(err) } },
+          'Token refresh failed - re-authentication required'
+        );
         throw new Error(
           `Session expired. Please visit ${config.baseUrl}/auth/login to sign in again.`
         );

@@ -3,12 +3,16 @@ import { config, GRAPH_SCOPES, getOAuthEndpoints } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { generatePKCEPair, generateState, generateNonce, type PKCEPair } from './pkce.js';
 import { sessionManager, type TokenSet, type UserSession } from './session.js';
+import { createMsalCachePlugin } from './msal-cache-plugin.js';
 
 const msalConfig: Configuration = {
   auth: {
     clientId: config.azureClientId,
     clientSecret: config.azureClientSecret,
     authority: `https://login.microsoftonline.com/${config.azureTenantId}`,
+  },
+  cache: {
+    cachePlugin: createMsalCachePlugin(),
   },
   system: {
     loggerOptions: {
@@ -154,7 +158,10 @@ export class OAuthClient {
         userDisplayName,
       };
     } catch (err) {
-      logger.error({ err }, 'Failed to exchange code for tokens');
+      logger.error(
+        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) } },
+        'Failed to exchange code for tokens'
+      );
       throw err;
     }
   }
@@ -199,7 +206,10 @@ export class OAuthClient {
 
       return tokens;
     } catch (err) {
-      logger.error({ err }, 'Failed to refresh tokens');
+      logger.error(
+        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) } },
+        'Failed to refresh tokens'
+      );
       throw err;
     }
   }
