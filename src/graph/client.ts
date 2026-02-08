@@ -221,11 +221,12 @@ export class GraphClient {
     top?: number;
     skip?: number;
     filter?: string;
+    search?: string;
     select?: string[];
     orderBy?: string;
     userId?: string;
   }): Promise<{ messages: GraphMessage[]; nextLink?: string }> {
-    const { folderId, top = 25, skip, filter, select, orderBy, userId } = options;
+    const { folderId, top = 25, skip, filter, search, select, orderBy, userId } = options;
 
     const base = userId ? `/users/${userId}` : '/me';
     const endpoint = folderId
@@ -236,8 +237,16 @@ export class GraphClient {
 
     if (top) request = request.top(top);
     if (skip) request = request.skip(skip);
-    if (filter) request = request.filter(filter);
-    if (orderBy) request = request.orderby(orderBy);
+
+    // $search and $filter/$orderby are mutually exclusive in Graph API
+    if (search) {
+      request = request.search(`"${search.replace(/"/g, '\\"')}"`);
+      // Graph API requires ConsistencyLevel header for $search
+      request = request.header('ConsistencyLevel', 'eventual');
+    } else {
+      if (filter) request = request.filter(filter);
+      if (orderBy) request = request.orderby(orderBy);
+    }
 
     const selectFields = select ?? [
       'id',

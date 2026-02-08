@@ -97,7 +97,7 @@ describe('Mail Tools', () => {
     it('should get message without body by default', async () => {
       const result = await mailTools.getMessage({ message_id: 'msg-1' });
 
-      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', false);
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', false, undefined);
       expect(result).not.toHaveProperty('body');
     });
 
@@ -110,7 +110,7 @@ describe('Mail Tools', () => {
 
       const result = await mailTools.getMessage({ message_id: 'msg-1', include_body: true });
 
-      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true);
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true, undefined);
       expect(result).toHaveProperty('body');
     });
   });

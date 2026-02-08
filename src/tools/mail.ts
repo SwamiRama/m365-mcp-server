@@ -22,12 +22,19 @@ export const listMessagesInputSchema = z.object({
     .optional()
     .default(25)
     .describe('Maximum number of messages to return (1-100)'),
+  search: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      'KQL search query (PREFERRED for sender/subject/body searches). Examples: "from:user@example.com", "subject:budget", "from:john subject:report". Supports from, to, cc, bcc, subject, body, attachment keywords.'
+    ),
   query: z
     .string()
     .max(500)
     .optional()
     .describe(
-      'OData filter query for messages (e.g., "from/emailAddress/address eq \'user@example.com\'")'
+      'OData $filter query (advanced use only, prefer "search" instead). Example: "hasAttachments eq true". Cannot be combined with "search".'
     ),
   since: z
     .string()
@@ -124,20 +131,35 @@ export class MailTools {
       }
     }
 
-    // Build filter
-    let filter = validated.query;
-    if (validated.since) {
-      const sinceFilter = `receivedDateTime ge ${validated.since}`;
-      filter = filter ? `(${filter}) and ${sinceFilter}` : sinceFilter;
+    // Build search/filter — $search and $filter are mutually exclusive in Graph API
+    let filter: string | undefined;
+    let search: string | undefined;
+
+    if (validated.search) {
+      // KQL search mode — cannot combine with $filter or $orderby
+      // Results are automatically sorted by receivedDateTime desc
+      search = validated.search;
+      if (validated.since) {
+        // Append received date constraint to KQL search
+        search = `${search} received>=${validated.since.split('T')[0]}`;
+      }
+    } else {
+      // OData filter mode
+      filter = validated.query;
+      if (validated.since) {
+        const sinceFilter = `receivedDateTime ge ${validated.since}`;
+        filter = filter ? `(${filter}) and ${sinceFilter}` : sinceFilter;
+      }
     }
 
-    logger.debug({ folderId, top: validated.top, filter }, 'Listing messages');
+    logger.debug({ folderId, top: validated.top, filter, search }, 'Listing messages');
 
     const result = await this.graphClient.listMessages({
       folderId,
       top: validated.top,
       filter,
-      orderBy: 'receivedDateTime desc',
+      search,
+      orderBy: search ? undefined : 'receivedDateTime desc',
       userId: validated.mailbox,
     });
 
@@ -189,7 +211,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_list_messages',
     description:
-      'List email messages from a Microsoft 365 mailbox. Returns subject, sender, date, and preview. Supports shared mailboxes via the mailbox parameter. Use mail_get_message for full content.',
+      'List email messages from a Microsoft 365 mailbox. Returns subject, sender, date, and preview. Use "search" (KQL) for sender/subject/body searches (PREFERRED). Use "query" (OData $filter) only for property filters like hasAttachments or isRead. Supports shared mailboxes via the mailbox parameter. Use mail_get_message with a message ID from THIS response to get full content.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -204,10 +226,15 @@ export const mailToolDefinitions = [
           minimum: 1,
           maximum: 100,
         },
+        search: {
+          type: 'string',
+          description:
+            'KQL search query (PREFERRED for sender/subject/body searches). Examples: "from:user@example.com", "subject:budget report", "from:john subject:invoice". Cannot be combined with "query".',
+        },
         query: {
           type: 'string',
           description:
-            "OData filter query for messages (e.g., \"from/emailAddress/address eq 'user@example.com'\")",
+            'OData $filter query (advanced, prefer "search" instead). Example: "hasAttachments eq true". Cannot be combined with "search".',
         },
         since: {
           type: 'string',
@@ -224,13 +251,13 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_message',
     description:
-      'Get the full details of a specific email message by ID, including the full body if requested. Supports shared mailboxes via the mailbox parameter.',
+      'Get the full details of a specific email message by ID, including the full body if requested. IMPORTANT: The message_id MUST be an ID returned by a recent mail_list_messages call — do not reuse IDs from previous conversations. If using a shared mailbox, pass the same mailbox parameter used in mail_list_messages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         message_id: {
           type: 'string',
-          description: 'The unique ID of the message',
+          description: 'The unique message ID from a recent mail_list_messages response. Do not fabricate or reuse stale IDs.',
         },
         include_body: {
           type: 'boolean',

@@ -294,7 +294,7 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_list_sites',
     description:
-      'Search and list SharePoint sites accessible to the user. Use the site ID to list drives within a site.',
+      'Search and list SharePoint sites accessible to the user. Returns site IDs that MUST be used as-is in sp_list_drives. Always call this first before accessing any SharePoint site content.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -308,14 +308,14 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_list_drives',
     description:
-      "List document libraries/drives. Without a site_id, returns the user's personal OneDrive.",
+      "List document libraries/drives for a SharePoint site. Without a site_id, returns the user's personal OneDrive. IMPORTANT: The site_id MUST be the exact 'id' value returned by sp_list_sites (format: 'hostname,siteCollectionId,siteId'). Do not construct or guess site IDs.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         site_id: {
           type: 'string',
           description:
-            "Site ID to list drives from. If not provided, lists the user's personal OneDrive.",
+            "The exact site ID from an sp_list_sites response (e.g., 'contoso.sharepoint.com,guid1,guid2'). Do not guess or construct this value.",
         },
       },
     },
@@ -323,18 +323,18 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_list_children',
     description:
-      'List files and folders in a drive. Provide item_id to list contents of a specific folder, or omit for root.',
+      'List files and folders in a drive. Provide item_id to list contents of a specific folder, or omit for root. IMPORTANT: drive_id MUST be the exact ID from an sp_list_drives response. item_id MUST be from a previous sp_list_children response.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         drive_id: {
           type: 'string',
-          description: 'The ID of the drive to list items from',
+          description: 'The exact drive ID from an sp_list_drives response. Do not guess or construct this value.',
         },
         item_id: {
           type: 'string',
           description:
-            'The ID of the folder to list children from. If not provided, lists root folder contents.',
+            'The exact folder ID from a previous sp_list_children response. If not provided, lists root folder contents.',
         },
       },
       required: ['drive_id'],
@@ -343,17 +343,17 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_get_file',
     description:
-      'Get file metadata and content. Text files are returned as text. PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) are automatically parsed to extract readable text. Other binary files are returned as base64. Maximum size: 10MB.',
+      'Get file metadata and content. Text files are returned as text. PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) are automatically parsed to extract readable text. Other binary files are returned as base64. Maximum size: 10MB. IMPORTANT: drive_id and item_id MUST come from previous sp_list_drives / sp_list_children responses.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         drive_id: {
           type: 'string',
-          description: 'The ID of the drive containing the file',
+          description: 'The exact drive ID from an sp_list_drives response.',
         },
         item_id: {
           type: 'string',
-          description: 'The ID of the file to retrieve',
+          description: 'The exact file ID from an sp_list_children response.',
         },
       },
       required: ['drive_id', 'item_id'],
