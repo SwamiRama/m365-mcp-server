@@ -39,6 +39,17 @@ export const searchFilesInputSchema = z.object({
     .describe(
       'Search query (supports KQL). Examples: "Ersthelfer Berlin", "filename:budget.xlsx", "filetype:pdf quarterly report"'
     ),
+  site_name: z
+    .string()
+    .max(256)
+    .optional()
+    .describe(
+      'Optional: SharePoint site name to scope the search. Example: "IZ - Newsletter". When provided, only files from this site are returned.'
+    ),
+  sort: z
+    .enum(['relevance', 'lastModified'])
+    .optional()
+    .describe('Sort order: "relevance" (default) or "lastModified" (newest first)'),
   size: z
     .number()
     .int()
@@ -46,6 +57,30 @@ export const searchFilesInputSchema = z.object({
     .max(25)
     .optional()
     .describe('Number of results to return (default: 10, max: 25)'),
+});
+
+export const searchAndReadInputSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .max(512)
+    .describe(
+      'Search query to find the file. KQL supported. Examples: "Ersthelfer Berlin", "filename:budget.xlsx"'
+    ),
+  site_name: z
+    .string()
+    .max(256)
+    .optional()
+    .describe('Optional: SharePoint site name to scope the search.'),
+  result_index: z
+    .number()
+    .int()
+    .min(0)
+    .max(24)
+    .optional()
+    .describe(
+      'Which search result to read (0-based). Default: 0 (top result). Use this if a previous sp_search showed multiple matches and you want a specific one.'
+    ),
 });
 
 export const listChildrenInputSchema = z.object({
@@ -70,6 +105,7 @@ export type ListDrivesInput = z.infer<typeof listDrivesInputSchema>;
 export type ListChildrenInput = z.infer<typeof listChildrenInputSchema>;
 export type GetFileInput = z.infer<typeof getFileInputSchema>;
 export type SearchFilesInput = z.infer<typeof searchFilesInputSchema>;
+export type SearchAndReadInput = z.infer<typeof searchAndReadInputSchema>;
 
 // Maximum file size for content retrieval (10MB)
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -187,33 +223,127 @@ export class SharePointTools {
   }
 
   /**
+   * Shared helper: fetch file content and parse it into the result object.
+   * Used by both getFile and searchAndRead to avoid code duplication.
+   */
+  private async fetchAndParseContent(
+    driveId: string,
+    itemId: string,
+    fileName: string,
+    result: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const contentResult = await this.graphClient.getFileContent(
+        driveId,
+        itemId,
+        MAX_FILE_SIZE
+      );
+
+      if (contentResult) {
+        const mimeType = contentResult.mimeType;
+
+        if (isTextMimeType(mimeType)) {
+          result['content'] = contentResult.content.toString('utf-8');
+          result['contentType'] = 'text';
+        } else if (isParsableMimeType(mimeType)) {
+          try {
+            const parsed = await parseFileContent(
+              contentResult.content,
+              mimeType,
+              fileName
+            );
+            result['content'] = parsed.text;
+            result['contentType'] = 'parsed_text';
+            result['parsedFormat'] = parsed.format;
+            result['truncated'] = parsed.truncated;
+          } catch (parseErr) {
+            const parseMessage =
+              parseErr instanceof Error ? parseErr.message : 'Unknown parsing error';
+            logger.warn(
+              { err: parseErr, mimeType, fileName },
+              'Document parsing failed, falling back to base64'
+            );
+            result['content'] = contentResult.content.toString('base64');
+            result['contentType'] = 'base64';
+            result['parseError'] = parseMessage;
+          }
+        } else {
+          result['content'] = contentResult.content.toString('base64');
+          result['contentType'] = 'base64';
+        }
+
+        result['contentMimeType'] = mimeType;
+        result['contentSize'] = contentResult.size;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      logger.warn(
+        { err, driveId, itemId },
+        'Failed to fetch file content'
+      );
+      result['content'] = null;
+      result['contentError'] = errorMessage;
+    }
+  }
+
+  /**
+   * Build a KQL query with optional site scoping.
+   * Returns the final query string and the resolved site URL (if any).
+   */
+  private async buildScopedQuery(
+    query: string,
+    siteName?: string
+  ): Promise<{ kqlQuery: string; resolvedSite?: string; siteError?: string }> {
+    if (!siteName) {
+      return { kqlQuery: query };
+    }
+
+    const siteUrl = await this.graphClient.resolveSiteWebUrl(siteName);
+    if (siteUrl) {
+      return {
+        kqlQuery: `${query} path:"${siteUrl}"`,
+        resolvedSite: siteUrl,
+      };
+    }
+
+    return {
+      kqlQuery: query,
+      siteError: `Site "${siteName}" was not found. Search will run across all sites. Use sp_list_sites to see available sites.`,
+    };
+  }
+
+  /**
    * Search for files across all SharePoint sites and OneDrive
    */
   async searchFiles(input: SearchFilesInput): Promise<object> {
     const validated = searchFilesInputSchema.parse(input);
     const size = validated.size ?? 10;
 
-    logger.debug({ query: validated.query, size }, 'Searching files');
+    logger.debug({ query: validated.query, siteName: validated.site_name, size }, 'Searching files');
+
+    const { kqlQuery, resolvedSite, siteError } = await this.buildScopedQuery(
+      validated.query,
+      validated.site_name
+    );
 
     const result = await this.graphClient.searchDriveItems({
-      query: validated.query,
+      query: kqlQuery,
       size,
+      sortBy: validated.sort ?? 'relevance',
     });
 
-    const items = result.hits.map((hit: SearchHit) => {
+    const items = result.hits.map((hit: SearchHit, index: number) => {
       const resource = hit.resource;
+      const driveId = resource.parentReference?.driveId;
+      const itemId = resource.id;
+
       const formatted: Record<string, unknown> = {
+        '#': index + 1,
         name: resource.name,
         webUrl: resource.webUrl,
         lastModified: resource.lastModifiedDateTime,
         size: resource.size,
       };
-
-      // Include drive/item IDs so LLM can call sp_get_file directly
-      if (resource.parentReference?.driveId) {
-        formatted['drive_id'] = resource.parentReference.driveId;
-      }
-      formatted['item_id'] = resource.id;
 
       if (resource.file) {
         formatted['type'] = 'file';
@@ -224,8 +354,23 @@ export class SharePointTools {
 
       // Include search snippet if available
       if (hit.summary) {
-        // Clean up highlight tags from summary
-        formatted['summary'] = hit.summary.replace(/<\/?c0>/g, '');
+        formatted['summary'] = hit.summary.replace(/<\/?c0>/g, '').replace(/<ddd\/>/g, '…');
+      }
+
+      // Location context from parentReference
+      if (resource.parentReference?.path) {
+        formatted['location'] = resource.parentReference.path;
+      }
+
+      // Include IDs for sp_get_file
+      if (driveId) {
+        formatted['drive_id'] = driveId;
+      }
+      formatted['item_id'] = itemId;
+
+      // Anti-hallucination: embed the exact call the LLM should make
+      if (driveId && itemId && resource.file) {
+        formatted['action'] = `To read this file: sp_get_file(drive_id="${driveId}", item_id="${itemId}")`;
       }
 
       return formatted;
@@ -235,8 +380,105 @@ export class SharePointTools {
       results: items,
       total: result.total,
       moreResultsAvailable: result.moreResultsAvailable,
-      _note: 'Use drive_id and item_id with sp_get_file to retrieve file content. Use sp_list_children with drive_id to browse folders.',
+      ...(resolvedSite ? { site_filter: resolvedSite } : {}),
+      ...(siteError ? { site_warning: siteError } : {}),
+      _note:
+        'IMPORTANT: To read a file, use the EXACT drive_id and item_id from a result above. Do NOT use IDs from earlier messages. Alternatively, use sp_search_read to search and read in one step.',
     };
+  }
+
+  /**
+   * Search for a file and immediately return its content.
+   * Combines search + file retrieval in one step to prevent ID mismatches.
+   */
+  async searchAndRead(input: SearchAndReadInput): Promise<object> {
+    const validated = searchAndReadInputSchema.parse(input);
+    const resultIndex = validated.result_index ?? 0;
+
+    logger.debug(
+      { query: validated.query, siteName: validated.site_name, resultIndex },
+      'Search and read file'
+    );
+
+    // Step 1: Build scoped query
+    const { kqlQuery, resolvedSite } = await this.buildScopedQuery(
+      validated.query,
+      validated.site_name
+    );
+
+    // Step 2: Search
+    const searchResult = await this.graphClient.searchDriveItems({
+      query: kqlQuery,
+      size: Math.max(resultIndex + 1, 5),
+      sortBy: 'relevance',
+    });
+
+    if (searchResult.hits.length === 0) {
+      return {
+        found: false,
+        query: validated.query,
+        ...(resolvedSite ? { site_filter: resolvedSite } : {}),
+        _note: 'No files matched. Try broader search terms or check site_name spelling. Use sp_list_sites to see available sites.',
+      };
+    }
+
+    if (resultIndex >= searchResult.hits.length) {
+      return {
+        found: false,
+        query: validated.query,
+        availableResults: searchResult.hits.length,
+        _note: `result_index ${resultIndex} is out of range. Only ${searchResult.hits.length} result(s) found. Use a lower index or try sp_search first to see all results.`,
+      };
+    }
+
+    // Step 3: Get the target hit (safe: bounds checked above)
+    const hit = searchResult.hits[resultIndex]!;
+    const resource = hit.resource;
+    const driveId = resource.parentReference?.driveId;
+    const itemId = resource.id;
+
+    const result: Record<string, unknown> = {
+      found: true,
+      name: resource.name,
+      webUrl: resource.webUrl,
+      lastModified: resource.lastModifiedDateTime,
+      size: resource.size,
+      mimeType: resource.file?.mimeType,
+      searchRank: resultIndex + 1,
+      totalResults: searchResult.total,
+    };
+
+    if (hit.summary) {
+      result['summary'] = hit.summary.replace(/<\/?c0>/g, '').replace(/<ddd\/>/g, '…');
+    }
+
+    if (resource.parentReference?.path) {
+      result['location'] = resource.parentReference.path;
+    }
+
+    // Step 4: Fetch content using IDs directly from search hit (no hallucination possible)
+    if (!driveId || !itemId) {
+      result['content'] = null;
+      result['contentError'] = 'Search result missing drive or item ID — cannot retrieve content.';
+      return result;
+    }
+
+    if (!resource.file) {
+      result['content'] = null;
+      result['contentError'] = 'Search result is a folder, not a file.';
+      return result;
+    }
+
+    const fileSize = resource.size ?? 0;
+    if (fileSize > MAX_FILE_SIZE) {
+      result['content'] = null;
+      result['contentError'] = `File too large (${formatFileSize(fileSize)}). Maximum: ${formatFileSize(MAX_FILE_SIZE)}.`;
+      return result;
+    }
+
+    await this.fetchAndParseContent(driveId, itemId, resource.name ?? 'unknown', result);
+
+    return result;
   }
 
   /**
@@ -326,62 +568,12 @@ export class SharePointTools {
       return result;
     }
 
-    // Fetch content
-    try {
-      const contentResult = await this.graphClient.getFileContent(
-        validated.drive_id,
-        validated.item_id,
-        MAX_FILE_SIZE
-      );
-
-      if (contentResult) {
-        const mimeType = contentResult.mimeType;
-
-        if (isTextMimeType(mimeType)) {
-          // Return text content directly
-          result['content'] = contentResult.content.toString('utf-8');
-          result['contentType'] = 'text';
-        } else if (isParsableMimeType(mimeType)) {
-          // Parse document formats (PDF, Office) to extract text
-          try {
-            const parsed = await parseFileContent(
-              contentResult.content,
-              mimeType,
-              item.name ?? 'unknown'
-            );
-            result['content'] = parsed.text;
-            result['contentType'] = 'parsed_text';
-            result['parsedFormat'] = parsed.format;
-            result['truncated'] = parsed.truncated;
-          } catch (parseErr) {
-            // Fallback to base64 if parsing fails
-            const parseMessage = parseErr instanceof Error ? parseErr.message : 'Unknown parsing error';
-            logger.warn(
-              { err: parseErr, mimeType, fileName: item.name },
-              'Document parsing failed, falling back to base64'
-            );
-            result['content'] = contentResult.content.toString('base64');
-            result['contentType'] = 'base64';
-            result['parseError'] = parseMessage;
-          }
-        } else {
-          // Return base64 encoded binary content
-          result['content'] = contentResult.content.toString('base64');
-          result['contentType'] = 'base64';
-        }
-
-        result['contentMimeType'] = mimeType;
-        result['contentSize'] = contentResult.size;
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      logger.warn(
-        { err, driveId: validated.drive_id, itemId: validated.item_id },
-        'Failed to fetch file content'
-      );
-      result['content'] = null;
-      result['contentError'] = errorMessage;
-    }
+    await this.fetchAndParseContent(
+      validated.drive_id,
+      validated.item_id,
+      item.name ?? 'unknown',
+      result
+    );
 
     return result;
   }
@@ -390,15 +582,55 @@ export class SharePointTools {
 // Tool definitions for MCP registration
 export const sharePointToolDefinitions = [
   {
+    name: 'sp_search_read',
+    description:
+      'Search for a file and immediately return its content in one step. This is the EASIEST and MOST RELIABLE way to find and read a document. ' +
+      'Combines search + file retrieval, so there are no ID mismatches. ' +
+      'Use this FIRST when the user asks "What does document X say?" or "Show me the content of Y" or any question that requires reading file content. ' +
+      'PDF, Word, Excel, PowerPoint are auto-parsed to text. Max 10MB. ' +
+      'Examples: query="Ersthelfer Berlin", query="budget report" site_name="Finance Team".',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query to find the file. KQL supported: "Ersthelfer Berlin", "filename:budget.xlsx".',
+        },
+        site_name: {
+          type: 'string',
+          description: 'Optional: restrict search to this SharePoint site. Example: "IZ - Newsletter".',
+        },
+        result_index: {
+          type: 'number',
+          description: 'Which search result to read (0 = top result, default). Use if previous sp_search showed multiple matches.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'sp_search',
     description:
-      'Search for files across ALL SharePoint sites and OneDrive. This is the FASTEST way to find documents. Supports KQL syntax. Returns drive_id and item_id that can be passed directly to sp_get_file. Use this FIRST when the user asks about document content (e.g. "Wer sind die Ersthelfer?", "find the budget report"). Examples: "Ersthelfer Berlin", "filename:budget.xlsx", "filetype:pdf quarterly".',
+      'Search for files across ALL SharePoint sites and OneDrive. Returns file metadata and IDs, but NOT file content. ' +
+      'If you need file CONTENT, prefer sp_search_read instead. ' +
+      'Use this when the user wants to BROWSE or LIST files without reading them. ' +
+      'Supports KQL syntax and optional site_name scoping. ' +
+      'Examples: "Ersthelfer Berlin", "filename:budget.xlsx", "filetype:pdf quarterly".',
     inputSchema: {
       type: 'object' as const,
       properties: {
         query: {
           type: 'string',
           description: 'Search query. Supports KQL: "Ersthelfer Berlin", "filename:report.docx", "filetype:pdf budget".',
+        },
+        site_name: {
+          type: 'string',
+          description: 'Optional: restrict search to this SharePoint site. Example: "IZ - Newsletter".',
+        },
+        sort: {
+          type: 'string',
+          enum: ['relevance', 'lastModified'],
+          description: 'Sort order: "relevance" (default) or "lastModified" (newest first).',
         },
         size: {
           type: 'number',
@@ -411,7 +643,7 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_list_sites',
     description:
-      'List SharePoint sites accessible to the user. Returns site IDs needed for sp_list_drives. Use this when the user wants to browse a specific site, NOT when searching for document content (use sp_search instead).',
+      'List SharePoint sites accessible to the user. Returns site IDs needed for sp_list_drives. Use this when the user wants to browse a specific site, NOT when searching for document content (use sp_search_read instead).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -461,17 +693,18 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_get_file',
     description:
-      'Get file content. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are automatically parsed to readable text. Max 10MB. Use drive_id + item_id from sp_search or sp_list_children.',
+      'Get file content by drive_id + item_id. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are auto-parsed to readable text. Max 10MB. ' +
+      'IMPORTANT: Use the EXACT drive_id and item_id from the MOST RECENT sp_search or sp_list_children response. Do NOT use IDs from earlier messages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         drive_id: {
           type: 'string',
-          description: 'Drive ID from sp_search, sp_list_drives, or sp_list_children.',
+          description: 'The EXACT drive ID from the most recent sp_search or sp_list_children response.',
         },
         item_id: {
           type: 'string',
-          description: 'File ID from sp_search or sp_list_children.',
+          description: 'The EXACT file ID from the most recent sp_search or sp_list_children response.',
         },
       },
       required: ['drive_id', 'item_id'],

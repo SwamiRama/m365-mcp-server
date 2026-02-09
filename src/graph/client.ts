@@ -375,23 +375,28 @@ export class GraphClient {
     query: string;
     size?: number;
     from?: number;
+    sortBy?: 'lastModified' | 'relevance';
   }): Promise<{ hits: SearchHit[]; total: number; moreResultsAvailable: boolean }> {
-    const { query, size = 25, from = 0 } = options;
+    const { query, size = 25, from = 0, sortBy } = options;
+
+    const requestBody: Record<string, unknown> = {
+      entityTypes: ['driveItem'],
+      query: { queryString: query },
+      from,
+      size,
+    };
+
+    if (sortBy === 'lastModified') {
+      requestBody['sortProperties'] = [
+        { name: 'lastModifiedDateTime', isDescending: true },
+      ];
+    }
 
     const result = await this.executeWithRetry(
       () =>
         this.client
           .api('/search/query')
-          .post({
-            requests: [
-              {
-                entityTypes: ['driveItem'],
-                query: { queryString: query },
-                from,
-                size,
-              },
-            ],
-          }),
+          .post({ requests: [requestBody] }),
       'searchDriveItems'
     );
 
@@ -406,6 +411,24 @@ export class GraphClient {
       total: hitsContainer.total ?? 0,
       moreResultsAvailable: hitsContainer.moreResultsAvailable ?? false,
     };
+  }
+
+  /**
+   * Resolve a site name to its webUrl by searching sites.
+   * Returns the best matching site URL or null if not found.
+   */
+  async resolveSiteWebUrl(siteName: string): Promise<string | null> {
+    const sites = await this.listSites({ search: siteName, top: 5 });
+    if (sites.length === 0) return null;
+
+    // Prefer exact name/displayName match (case-insensitive), then first result
+    const lower = siteName.toLowerCase();
+    const exactMatch = sites.find(
+      (s) =>
+        s.name?.toLowerCase() === lower ||
+        s.displayName?.toLowerCase() === lower
+    );
+    return (exactMatch ?? sites[0])?.webUrl ?? null;
   }
 
   async listDriveItems(options: {

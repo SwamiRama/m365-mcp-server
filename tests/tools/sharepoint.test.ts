@@ -6,6 +6,7 @@ import {
   listChildrenInputSchema,
   getFileInputSchema,
   searchFilesInputSchema,
+  searchAndReadInputSchema,
 } from '../../src/tools/sharepoint.js';
 import type { GraphClient, GraphSite, GraphDrive, GraphDriveItem, SearchHit } from '../../src/graph/client.js';
 
@@ -62,6 +63,43 @@ describe('SharePoint Tools', () => {
     },
   ];
 
+  const mockSearchHits: SearchHit[] = [
+    {
+      hitId: 'hit-1',
+      rank: 1,
+      summary: 'Die <c0>Ersthelfer</c0> in <c0>Berlin</c0> sind...<ddd/>',
+      resource: {
+        id: 'item-search-1',
+        name: 'Ersthelfer-Liste.docx',
+        webUrl: 'https://contoso.sharepoint.com/sites/TeamSite/Documents/Ersthelfer-Liste.docx',
+        size: 25000,
+        lastModifiedDateTime: '2026-01-25T09:00:00Z',
+        file: { mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+        parentReference: {
+          driveId: 'drive-abc-123',
+          path: '/drives/drive-abc-123/root:/Documents',
+        },
+      },
+    },
+    {
+      hitId: 'hit-2',
+      rank: 2,
+      summary: 'Sicherheitsregeln für <c0>Ersthelfer</c0>...',
+      resource: {
+        id: 'item-search-2',
+        name: 'Sicherheit.pdf',
+        webUrl: 'https://contoso.sharepoint.com/sites/TeamSite/Documents/Sicherheit.pdf',
+        size: 150000,
+        lastModifiedDateTime: '2025-12-01T10:00:00Z',
+        file: { mimeType: 'application/pdf' },
+        parentReference: {
+          driveId: 'drive-abc-123',
+          path: '/drives/drive-abc-123/root:/Documents',
+        },
+      },
+    },
+  ];
+
   beforeEach(() => {
     mockGraphClient = {
       listSites: vi.fn().mockResolvedValue(mockSites),
@@ -70,34 +108,22 @@ describe('SharePoint Tools', () => {
       listDriveItems: vi.fn().mockResolvedValue(mockDriveItems),
       getDriveItem: vi.fn().mockResolvedValue(mockDriveItems[0]),
       getFileContent: vi.fn().mockResolvedValue({
-        content: Buffer.from('file content'),
+        content: Buffer.from('file content here'),
         mimeType: 'text/plain',
-        size: 12,
+        size: 17,
       }),
       searchDriveItems: vi.fn().mockResolvedValue({
-        hits: [
-          {
-            hitId: 'hit-1',
-            rank: 1,
-            summary: 'Die <c0>Ersthelfer</c0> in <c0>Berlin</c0> sind...',
-            resource: {
-              id: 'item-search-1',
-              name: 'Ersthelfer-Liste.docx',
-              webUrl: 'https://contoso.sharepoint.com/sites/TeamSite/Documents/Ersthelfer-Liste.docx',
-              size: 25000,
-              lastModifiedDateTime: '2026-01-25T09:00:00Z',
-              file: { mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-              parentReference: { driveId: 'drive-abc-123' },
-            },
-          },
-        ] as SearchHit[],
-        total: 1,
+        hits: mockSearchHits,
+        total: 2,
         moreResultsAvailable: false,
       }),
+      resolveSiteWebUrl: vi.fn().mockResolvedValue('https://contoso.sharepoint.com/sites/TeamSite'),
     } as unknown as GraphClient;
 
     spTools = new SharePointTools(mockGraphClient);
   });
+
+  // ===== listSites =====
 
   describe('listSites', () => {
     it('should list sites with default wildcard search', async () => {
@@ -114,6 +140,8 @@ describe('SharePoint Tools', () => {
       expect(mockGraphClient.listSites).toHaveBeenCalledWith({ search: 'Team' });
     });
   });
+
+  // ===== listDrives =====
 
   describe('listDrives', () => {
     it('should list drives for a specific site', async () => {
@@ -141,6 +169,8 @@ describe('SharePoint Tools', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // ===== listChildren =====
 
   describe('listChildren', () => {
     it('should list root items of a drive', async () => {
@@ -176,15 +206,20 @@ describe('SharePoint Tools', () => {
     });
   });
 
+  // ===== getFile =====
+
   describe('getFile', () => {
-    it('should get file with text content', async () => {
+    it('should get file with text content via fetchAndParseContent', async () => {
       const result = await spTools.getFile({
         drive_id: 'drive-abc-123',
         item_id: 'item-1',
       }) as Record<string, unknown>;
 
       expect(mockGraphClient.getDriveItem).toHaveBeenCalledWith('drive-abc-123', 'item-1');
+      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith('drive-abc-123', 'item-1', 10 * 1024 * 1024);
       expect(result['name']).toBe('Report.docx');
+      expect(result['content']).toBe('file content here');
+      expect(result['contentType']).toBe('text');
     });
 
     it('should throw enriched error for 404', async () => {
@@ -206,7 +241,24 @@ describe('SharePoint Tools', () => {
         spTools.getFile({ drive_id: 'drive-abc-123', item_id: 'item-2' })
       ).rejects.toThrow('The specified item is not a file');
     });
+
+    it('should handle files that are too large', async () => {
+      (mockGraphClient.getDriveItem as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...mockDriveItems[0],
+        size: 20 * 1024 * 1024, // 20MB
+      });
+
+      const result = await spTools.getFile({
+        drive_id: 'drive-abc-123',
+        item_id: 'item-1',
+      }) as Record<string, unknown>;
+
+      expect(result['content']).toBeNull();
+      expect(result['contentError']).toContain('too large');
+    });
   });
+
+  // ===== searchFiles =====
 
   describe('searchFiles', () => {
     it('should search for files and return formatted results', async () => {
@@ -215,26 +267,63 @@ describe('SharePoint Tools', () => {
       expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith({
         query: 'Ersthelfer Berlin',
         size: 10,
+        sortBy: 'relevance',
       });
-      expect(result['total']).toBe(1);
+      expect(result['total']).toBe(2);
 
       const results = result['results'] as Record<string, unknown>[];
-      expect(results).toHaveLength(1);
-      expect(results[0]['name']).toBe('Ersthelfer-Liste.docx');
-      expect(results[0]['drive_id']).toBe('drive-abc-123');
-      expect(results[0]['item_id']).toBe('item-search-1');
-      expect(results[0]['type']).toBe('file');
-      // Summary should have highlight tags removed
-      expect(results[0]['summary']).toBe('Die Ersthelfer in Berlin sind...');
+      expect(results).toHaveLength(2);
+      expect(results[0]!['name']).toBe('Ersthelfer-Liste.docx');
+      expect(results[0]!['drive_id']).toBe('drive-abc-123');
+      expect(results[0]!['item_id']).toBe('item-search-1');
+      expect(results[0]!['type']).toBe('file');
+    });
+
+    it('should clean up highlight tags and ddd tags from summary', async () => {
+      const result = await spTools.searchFiles({ query: 'Ersthelfer Berlin' }) as Record<string, unknown>;
+      const results = result['results'] as Record<string, unknown>[];
+      // '<c0>Ersthelfer</c0> in <c0>Berlin</c0> sind...<ddd/>' → 'Ersthelfer in Berlin sind...…'
+      expect(results[0]!['summary']).toBe('Die Ersthelfer in Berlin sind...…');
+    });
+
+    it('should include action field for anti-hallucination', async () => {
+      const result = await spTools.searchFiles({ query: 'test' }) as Record<string, unknown>;
+      const results = result['results'] as Record<string, unknown>[];
+
+      expect(results[0]!['action']).toContain('sp_get_file');
+      expect(results[0]!['action']).toContain('drive-abc-123');
+      expect(results[0]!['action']).toContain('item-search-1');
+    });
+
+    it('should include result index numbers', async () => {
+      const result = await spTools.searchFiles({ query: 'test' }) as Record<string, unknown>;
+      const results = result['results'] as Record<string, unknown>[];
+
+      expect(results[0]!['#']).toBe(1);
+      expect(results[1]!['#']).toBe(2);
+    });
+
+    it('should include location from parentReference.path', async () => {
+      const result = await spTools.searchFiles({ query: 'test' }) as Record<string, unknown>;
+      const results = result['results'] as Record<string, unknown>[];
+
+      expect(results[0]!['location']).toBe('/drives/drive-abc-123/root:/Documents');
+    });
+
+    it('should include warning note about using exact IDs', async () => {
+      const result = await spTools.searchFiles({ query: 'test' }) as Record<string, unknown>;
+
+      expect(result['_note']).toContain('EXACT drive_id and item_id');
+      expect(result['_note']).toContain('Do NOT use IDs from earlier messages');
+      expect(result['_note']).toContain('sp_search_read');
     });
 
     it('should use custom size parameter', async () => {
       await spTools.searchFiles({ query: 'test', size: 5 });
 
-      expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith({
-        query: 'test',
-        size: 5,
-      });
+      expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+        expect.objectContaining({ size: 5 })
+      );
     });
 
     it('should handle empty search results', async () => {
@@ -249,8 +338,237 @@ describe('SharePoint Tools', () => {
       expect(result['total']).toBe(0);
       expect(result['results']).toEqual([]);
     });
+
+    describe('with site_name scoping', () => {
+      it('should prepend KQL path filter when site_name is provided', async () => {
+        await spTools.searchFiles({ query: 'test', site_name: 'TeamSite' });
+
+        expect(mockGraphClient.resolveSiteWebUrl).toHaveBeenCalledWith('TeamSite');
+        expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+          expect.objectContaining({
+            query: 'test path:"https://contoso.sharepoint.com/sites/TeamSite"',
+          })
+        );
+      });
+
+      it('should include site_filter in response when site is resolved', async () => {
+        const result = await spTools.searchFiles({ query: 'test', site_name: 'TeamSite' }) as Record<string, unknown>;
+
+        expect(result['site_filter']).toBe('https://contoso.sharepoint.com/sites/TeamSite');
+      });
+
+      it('should include site_warning when site is not found', async () => {
+        (mockGraphClient.resolveSiteWebUrl as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+        const result = await spTools.searchFiles({ query: 'test', site_name: 'NonExistent' }) as Record<string, unknown>;
+
+        expect(result['site_warning']).toContain('NonExistent');
+        expect(result['site_warning']).toContain('not found');
+        // Should still search (without scoping)
+        expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'test' })
+        );
+      });
+
+      it('should work without site_name (backward compatible)', async () => {
+        await spTools.searchFiles({ query: 'test' });
+
+        expect(mockGraphClient.resolveSiteWebUrl).not.toHaveBeenCalled();
+        expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'test' })
+        );
+      });
+    });
+
+    describe('with sort parameter', () => {
+      it('should pass sortBy to searchDriveItems', async () => {
+        await spTools.searchFiles({ query: 'test', sort: 'lastModified' });
+
+        expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+          expect.objectContaining({ sortBy: 'lastModified' })
+        );
+      });
+
+      it('should default to relevance sort', async () => {
+        await spTools.searchFiles({ query: 'test' });
+
+        expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+          expect.objectContaining({ sortBy: 'relevance' })
+        );
+      });
+    });
+  });
+
+  // ===== searchAndRead =====
+
+  describe('searchAndRead', () => {
+    it('should search and return file content in one call', async () => {
+      const result = await spTools.searchAndRead({ query: 'Ersthelfer Berlin' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['name']).toBe('Ersthelfer-Liste.docx');
+      expect(result['content']).toBe('file content here');
+      expect(result['contentType']).toBe('text');
+      expect(result['searchRank']).toBe(1);
+      expect(result['totalResults']).toBe(2);
+    });
+
+    it('should use IDs directly from search result (no hallucination possible)', async () => {
+      await spTools.searchAndRead({ query: 'test' });
+
+      // getFileContent should be called with the EXACT IDs from the search hit
+      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith(
+        'drive-abc-123',    // from mockSearchHits[0].resource.parentReference.driveId
+        'item-search-1',     // from mockSearchHits[0].resource.id
+        10 * 1024 * 1024
+      );
+    });
+
+    it('should return found:false when no results', async () => {
+      (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hits: [],
+        total: 0,
+        moreResultsAvailable: false,
+      });
+
+      const result = await spTools.searchAndRead({ query: 'nonexistent' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(false);
+      expect(result['_note']).toContain('No files matched');
+    });
+
+    it('should return error when result_index exceeds results', async () => {
+      const result = await spTools.searchAndRead({ query: 'test', result_index: 10 }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(false);
+      expect(result['availableResults']).toBe(2);
+      expect(result['_note']).toContain('out of range');
+    });
+
+    it('should use second result when result_index is 1', async () => {
+      const result = await spTools.searchAndRead({ query: 'test', result_index: 1 }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['name']).toBe('Sicherheit.pdf');
+      expect(result['searchRank']).toBe(2);
+
+      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith(
+        'drive-abc-123',
+        'item-search-2',
+        10 * 1024 * 1024
+      );
+    });
+
+    it('should handle site_name scoping', async () => {
+      await spTools.searchAndRead({ query: 'test', site_name: 'TeamSite' });
+
+      expect(mockGraphClient.resolveSiteWebUrl).toHaveBeenCalledWith('TeamSite');
+      expect(mockGraphClient.searchDriveItems).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: 'test path:"https://contoso.sharepoint.com/sites/TeamSite"',
+        })
+      );
+    });
+
+    it('should handle folder results gracefully', async () => {
+      (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hits: [{
+          hitId: 'folder-hit',
+          rank: 1,
+          resource: {
+            id: 'folder-1',
+            name: 'MyFolder',
+            webUrl: 'https://contoso.sharepoint.com/sites/TeamSite/Documents/MyFolder',
+            folder: { childCount: 3 },
+            parentReference: { driveId: 'drive-abc-123' },
+          },
+        }],
+        total: 1,
+        moreResultsAvailable: false,
+      });
+
+      const result = await spTools.searchAndRead({ query: 'folder' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['content']).toBeNull();
+      expect(result['contentError']).toContain('folder, not a file');
+    });
+
+    it('should handle file too large gracefully', async () => {
+      (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hits: [{
+          hitId: 'big-hit',
+          rank: 1,
+          resource: {
+            id: 'big-item',
+            name: 'BigFile.zip',
+            size: 20 * 1024 * 1024,
+            file: { mimeType: 'application/zip' },
+            parentReference: { driveId: 'drive-abc-123' },
+          },
+        }],
+        total: 1,
+        moreResultsAvailable: false,
+      });
+
+      const result = await spTools.searchAndRead({ query: 'big' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['content']).toBeNull();
+      expect(result['contentError']).toContain('too large');
+    });
+
+    it('should handle content download failure gracefully', async () => {
+      (mockGraphClient.getFileContent as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('Network timeout')
+      );
+
+      const result = await spTools.searchAndRead({ query: 'test' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['name']).toBe('Ersthelfer-Liste.docx');
+      expect(result['content']).toBeNull();
+      expect(result['contentError']).toBe('Network timeout');
+    });
+
+    it('should clean up highlight and ddd tags from summary', async () => {
+      const result = await spTools.searchAndRead({ query: 'test' }) as Record<string, unknown>;
+
+      expect(result['summary']).toBe('Die Ersthelfer in Berlin sind...…');
+    });
+
+    it('should include location from parentReference.path', async () => {
+      const result = await spTools.searchAndRead({ query: 'test' }) as Record<string, unknown>;
+
+      expect(result['location']).toBe('/drives/drive-abc-123/root:/Documents');
+    });
+
+    it('should handle missing driveId in search result', async () => {
+      (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hits: [{
+          hitId: 'no-drive-hit',
+          rank: 1,
+          resource: {
+            id: 'item-no-drive',
+            name: 'Orphan.txt',
+            file: { mimeType: 'text/plain' },
+            parentReference: {},
+          },
+        }],
+        total: 1,
+        moreResultsAvailable: false,
+      });
+
+      const result = await spTools.searchAndRead({ query: 'orphan' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['content']).toBeNull();
+      expect(result['contentError']).toContain('missing drive or item ID');
+    });
   });
 });
+
+// ===== Schema Validation Tests =====
 
 describe('SharePoint Input Schemas', () => {
   describe('listDrivesInputSchema', () => {
@@ -278,12 +596,22 @@ describe('SharePoint Input Schemas', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should accept valid search', () => {
+    it('should accept valid search with all optional params', () => {
       const result = searchFilesInputSchema.safeParse({
         query: 'Ersthelfer Berlin',
+        site_name: 'IZ - Newsletter',
+        sort: 'lastModified',
         size: 5,
       });
       expect(result.success).toBe(true);
+    });
+
+    it('should reject invalid sort value', () => {
+      const result = searchFilesInputSchema.safeParse({
+        query: 'test',
+        sort: 'invalid',
+      });
+      expect(result.success).toBe(false);
     });
 
     it('should reject size > 25', () => {
@@ -292,6 +620,46 @@ describe('SharePoint Input Schemas', () => {
         size: 50,
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('searchAndReadInputSchema', () => {
+    it('should require query', () => {
+      const result = searchAndReadInputSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept valid input with all optional fields', () => {
+      const result = searchAndReadInputSchema.safeParse({
+        query: 'Ersthelfer Berlin',
+        site_name: 'IZ - Newsletter',
+        result_index: 2,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject result_index > 24', () => {
+      const result = searchAndReadInputSchema.safeParse({
+        query: 'test',
+        result_index: 25,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative result_index', () => {
+      const result = searchAndReadInputSchema.safeParse({
+        query: 'test',
+        result_index: -1,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept result_index 0', () => {
+      const result = searchAndReadInputSchema.safeParse({
+        query: 'test',
+        result_index: 0,
+      });
+      expect(result.success).toBe(true);
     });
   });
 

@@ -1,6 +1,6 @@
 import { GraphClient } from '../graph/client.js';
 import { MailTools, mailToolDefinitions, type ListMessagesInput, type GetMessageInput, type UserContext } from './mail.js';
-import { SharePointTools, sharePointToolDefinitions, type ListSitesInput, type ListDrivesInput, type ListChildrenInput, type GetFileInput, type SearchFilesInput } from './sharepoint.js';
+import { SharePointTools, sharePointToolDefinitions, type ListSitesInput, type ListDrivesInput, type ListChildrenInput, type GetFileInput, type SearchFilesInput, type SearchAndReadInput } from './sharepoint.js';
 
 // Re-export tool definitions and types
 export { mailToolDefinitions } from './mail.js';
@@ -34,6 +34,8 @@ export class ToolExecutor {
         return this.mailTools.listFolders({});
 
       // SharePoint/Files tools
+      case 'sp_search_read':
+        return this.sharePointTools.searchAndRead(args as SearchAndReadInput);
       case 'sp_search':
         return this.sharePointTools.searchFiles(args as SearchFilesInput);
       case 'sp_list_sites':
