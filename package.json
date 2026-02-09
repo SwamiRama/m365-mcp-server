@@ -1,6 +1,6 @@
 {
   "name": "@anthropic/m365-mcp-server",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "MCP Server for Microsoft 365 - Email and SharePoint/OneDrive access with OAuth 2.1 + PKCE",
   "type": "module",
   "main": "dist/index.js",
