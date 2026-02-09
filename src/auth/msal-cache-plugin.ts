@@ -24,10 +24,19 @@ async function readCache(partitionKey: string): Promise<string | null> {
     if (data) {
       // Refresh TTL on read to prevent cache expiry while session is still active
       redis.expire(key, TTL_SECONDS).catch(() => {});
+      return data;
     }
-    return data;
+    // Migration fallback: try the old global key for sessions created before per-session cache.
+    // Safe because acquireTokenSilent filters by localAccountId per session.
+    const legacyData = await redis.get(BASE_REDIS_KEY);
+    if (legacyData) {
+      logger.info({ partitionKey }, 'Migrating MSAL cache from global to per-session key');
+      await redis.setex(key, TTL_SECONDS, legacyData);
+      return legacyData;
+    }
+    return null;
   }
-  return memoryCache.get(key) ?? null;
+  return memoryCache.get(key) ?? memoryCache.get(BASE_REDIS_KEY) ?? null;
 }
 
 async function writeCache(partitionKey: string, data: string): Promise<void> {
