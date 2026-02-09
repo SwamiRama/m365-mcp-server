@@ -10,34 +10,36 @@ import type { ICachePlugin, TokenCacheContext } from '@azure/msal-common/node';
 import { getRedisClient } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
 
-const REDIS_KEY = 'm365-mcp:msal-cache';
+const BASE_REDIS_KEY = 'm365-mcp:msal-cache';
 const TTL_SECONDS = 86400; // 24 hours
 
-// In-memory fallback for development
-let memoryCache: string | null = null;
+// In-memory fallback for development (map of keys to data)
+const memoryCache = new Map<string, string>();
 
-async function readCache(): Promise<string | null> {
+async function readCache(partitionKey: string): Promise<string | null> {
   const redis = getRedisClient();
+  const key = `${BASE_REDIS_KEY}:${partitionKey}`;
   if (redis) {
-    return redis.get(REDIS_KEY);
+    return redis.get(key);
   }
-  return memoryCache;
+  return memoryCache.get(key) ?? null;
 }
 
-async function writeCache(data: string): Promise<void> {
+async function writeCache(partitionKey: string, data: string): Promise<void> {
   const redis = getRedisClient();
+  const key = `${BASE_REDIS_KEY}:${partitionKey}`;
   if (redis) {
-    await redis.setex(REDIS_KEY, TTL_SECONDS, data);
+    await redis.setex(key, TTL_SECONDS, data);
   } else {
-    memoryCache = data;
+    memoryCache.set(key, data);
   }
 }
 
-export function createMsalCachePlugin(): ICachePlugin {
+export function createMsalCachePlugin(partitionKey: string): ICachePlugin {
   return {
     async beforeCacheAccess(ctx: TokenCacheContext): Promise<void> {
       try {
-        const cached = await readCache();
+        const cached = await readCache(partitionKey);
         if (cached) {
           ctx.tokenCache.deserialize(cached);
         }
@@ -54,7 +56,7 @@ export function createMsalCachePlugin(): ICachePlugin {
 
       try {
         const data = ctx.tokenCache.serialize();
-        await writeCache(data);
+        await writeCache(partitionKey, data);
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? { message: err.message } : { message: String(err) } },

@@ -88,6 +88,25 @@ export interface GraphDriveItem {
   };
 }
 
+// Search API types
+export interface SearchHit {
+  hitId: string;
+  rank: number;
+  summary?: string;
+  resource: GraphDriveItem & {
+    '@odata.type'?: string;
+    parentReference?: GraphDriveItem['parentReference'] & {
+      siteId?: string;
+    };
+  };
+}
+
+export interface SearchHitsContainer {
+  total: number;
+  moreResultsAvailable: boolean;
+  hits: SearchHit[];
+}
+
 // Rate limiting / retry configuration
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
@@ -328,16 +347,14 @@ export class GraphClient {
     return result.value ?? [];
   }
 
-  async listDrives(siteId?: string): Promise<GraphDrive[]> {
-    const endpoint = siteId ? `/sites/${siteId}/drives` : '/me/drives';
-
+  async listSiteDrives(siteId: string): Promise<GraphDrive[]> {
     const result = await this.executeWithRetry(
       () =>
         this.client
-          .api(endpoint)
+          .api(`/sites/${siteId}/drives`)
           .select('id,name,driveType,webUrl,owner')
           .get(),
-      'listDrives'
+      'listSiteDrives'
     );
 
     return result.value ?? [];
@@ -352,6 +369,43 @@ export class GraphClient {
           .get(),
       'getMyDrive'
     );
+  }
+
+  async searchDriveItems(options: {
+    query: string;
+    size?: number;
+    from?: number;
+  }): Promise<{ hits: SearchHit[]; total: number; moreResultsAvailable: boolean }> {
+    const { query, size = 25, from = 0 } = options;
+
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api('/search/query')
+          .post({
+            requests: [
+              {
+                entityTypes: ['driveItem'],
+                query: { queryString: query },
+                from,
+                size,
+              },
+            ],
+          }),
+      'searchDriveItems'
+    );
+
+    const hitsContainer: SearchHitsContainer | undefined = result?.value?.[0]?.hitsContainers?.[0];
+
+    if (!hitsContainer) {
+      return { hits: [], total: 0, moreResultsAvailable: false };
+    }
+
+    return {
+      hits: hitsContainer.hits ?? [],
+      total: hitsContainer.total ?? 0,
+      moreResultsAvailable: hitsContainer.moreResultsAvailable ?? false,
+    };
   }
 
   async listDriveItems(options: {

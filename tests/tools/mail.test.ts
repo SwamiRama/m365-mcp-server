@@ -61,15 +61,29 @@ describe('Mail Tools', () => {
       expect(result).toHaveProperty('count', 2);
     });
 
-    it('should include mailbox_context "personal" when no mailbox specified', async () => {
+    it('should include mailbox_context "personal" when no mailbox and no userContext', async () => {
       const result = await mailTools.listMessages({}) as Record<string, unknown>;
 
       expect(result['mailbox_context']).toBe('personal');
       expect(result['_note']).toContain('do NOT pass');
     });
 
-    it('should include mailbox_context with shared mailbox value', async () => {
-      const result = await mailTools.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
+    it('should include mailbox_context with user email when userContext is provided', async () => {
+      const mailToolsWithContext = new MailTools(mockGraphClient, {
+        userEmail: 'user@example.com',
+        userId: 'user-id-123',
+      });
+      const result = await mailToolsWithContext.listMessages({}) as Record<string, unknown>;
+
+      expect(result['mailbox_context']).toBe('user@example.com');
+      expect(result['_note']).toContain("mailbox='user@example.com'");
+    });
+
+    it('should prefer explicit mailbox over userContext email', async () => {
+      const mailToolsWithContext = new MailTools(mockGraphClient, {
+        userEmail: 'user@example.com',
+      });
+      const result = await mailToolsWithContext.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
 
       expect(result['mailbox_context']).toBe('shared@example.com');
       expect(result['_note']).toContain("mailbox='shared@example.com'");

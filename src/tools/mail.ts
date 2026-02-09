@@ -2,6 +2,15 @@ import { z } from 'zod';
 import { GraphClient, type GraphMessage, type GraphMailFolder } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
 
+/**
+ * User context from the authenticated session.
+ * Used to include user identity in responses, making them portable across MCP sessions.
+ */
+export interface UserContext {
+  userEmail?: string;
+  userId?: string;
+}
+
 // Shared mailbox schema — email address or Graph user ID
 const mailboxSchema = z.string().min(1).max(256)
   .describe('Email address or user ID of a shared mailbox. Omit to use your personal mailbox.');
@@ -114,7 +123,13 @@ function formatFolder(folder: GraphMailFolder): object {
 
 // Tool implementations
 export class MailTools {
-  constructor(private graphClient: GraphClient) {}
+  private graphClient: GraphClient;
+  private userContext?: UserContext;
+
+  constructor(graphClient: GraphClient, userContext?: UserContext) {
+    this.graphClient = graphClient;
+    this.userContext = userContext;
+  }
 
   /**
    * List messages in a mail folder
@@ -163,13 +178,19 @@ export class MailTools {
       userId: validated.mailbox,
     });
 
+    // Determine the effective mailbox identifier for this response.
+    // When no explicit mailbox was specified, use the authenticated user's email
+    // so the LLM can pass it as the 'mailbox' parameter in follow-up calls.
+    // This makes message IDs portable across MCP sessions (where /me might resolve differently).
+    const effectiveMailbox = validated.mailbox ?? this.userContext?.userEmail;
+
     return {
       messages: result.messages.map((m) => formatMessage(m)),
       count: result.messages.length,
       hasMore: !!result.nextLink,
-      mailbox_context: validated.mailbox ?? 'personal',
-      _note: validated.mailbox
-        ? `These message IDs belong to mailbox '${validated.mailbox}'. When calling mail_get_message, pass mailbox='${validated.mailbox}'.`
+      mailbox_context: effectiveMailbox ?? 'personal',
+      _note: effectiveMailbox
+        ? `These message IDs belong to mailbox '${effectiveMailbox}'. When calling mail_get_message, you MUST pass mailbox='${effectiveMailbox}'.`
         : "These message IDs belong to your personal mailbox. When calling mail_get_message, do NOT pass a 'mailbox' parameter.",
     };
   }
@@ -270,7 +291,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_message',
     description:
-      'Get the full details of a specific email message by ID, including the full body if requested. IMPORTANT: The message_id MUST be an ID returned by a recent mail_list_messages call — do not reuse IDs from previous conversations. If using a shared mailbox, pass the same mailbox parameter used in mail_list_messages.',
+      'Get the full details of a specific email message by ID, including the full body if requested. IMPORTANT: The message_id MUST be an ID returned by a recent mail_list_messages call — do not reuse IDs from previous conversations. You MUST pass the mailbox parameter with the exact mailbox_context value from the mail_list_messages response.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -284,7 +305,7 @@ export const mailToolDefinitions = [
         },
         mailbox: {
           type: 'string',
-          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+          description: 'The mailbox_context value from the mail_list_messages response. MUST be provided to ensure the message ID resolves correctly.',
         },
       },
       required: ['message_id'],

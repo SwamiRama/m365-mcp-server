@@ -598,8 +598,13 @@ async function handleToolsCall(
     }
 
     // Create Graph client and tool executor
+    // Pass user context so tools can include the user's identity in responses,
+    // making tool outputs portable across MCP sessions
     const graphClient = createGraphClient(currentTokens);
-    const toolExecutor = new ToolExecutor(graphClient);
+    const toolExecutor = new ToolExecutor(graphClient, {
+      userEmail: req.session?.userEmail,
+      userId: req.session?.userId,
+    });
 
     audit({
       event: 'tool.executed',

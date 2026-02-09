@@ -5,14 +5,14 @@ import { generatePKCEPair, generateState, generateNonce, type PKCEPair } from '.
 import { sessionManager, type TokenSet, type UserSession } from './session.js';
 import { createMsalCachePlugin } from './msal-cache-plugin.js';
 
-const msalConfig: Configuration = {
+const createMsalConfig = (sessionId: string): Configuration => ({
   auth: {
     clientId: config.azureClientId,
     clientSecret: config.azureClientSecret,
     authority: `https://login.microsoftonline.com/${config.azureTenantId}`,
   },
   cache: {
-    cachePlugin: createMsalCachePlugin(),
+    cachePlugin: createMsalCachePlugin(sessionId),
   },
   system: {
     loggerOptions: {
@@ -26,14 +26,12 @@ const msalConfig: Configuration = {
           4: 'trace',
         };
         const pinoLevel = levelMap[level] ?? 'info';
-        logger[pinoLevel]({ source: 'msal' }, message);
+        logger[pinoLevel]({ source: 'msal', sessionId }, message);
       },
       piiLoggingEnabled: false, // Never log PII
     },
   },
-};
-
-const msalClient = new ConfidentialClientApplication(msalConfig);
+});
 
 export interface AuthorizationUrlResult {
   url: string;
@@ -49,6 +47,13 @@ export interface TokenExchangeResult {
 
 export class OAuthClient {
   private endpoints = getOAuthEndpoints(config.azureTenantId);
+
+  /**
+   * Helper to create an isolated MSAL client for a session
+   */
+  private getMsalClient(sessionId: string): ConfidentialClientApplication {
+    return new ConfidentialClientApplication(createMsalConfig(sessionId));
+  }
 
   /**
    * Generate authorization URL with PKCE
@@ -102,7 +107,7 @@ export class OAuthClient {
 
     const url = `${this.endpoints.authorize}?${params.toString()}`;
 
-    logger.info({ redirectUri }, 'Generated authorization URL');
+    logger.info({ redirectUri, sessionId: session.id }, 'Generated authorization URL');
 
     return { url, session };
   }
@@ -120,6 +125,8 @@ export class OAuthClient {
     if (!codeVerifier) {
       throw new Error('PKCE verifier not found in session');
     }
+
+    const msalClient = this.getMsalClient(session.id);
 
     try {
       const result = await msalClient.acquireTokenByCode({
@@ -147,7 +154,7 @@ export class OAuthClient {
       const userDisplayName = account?.name;
 
       logger.info(
-        { userId, hasRefreshToken: false },
+        { userId, sessionId: session.id, hasRefreshToken: false },
         'Successfully exchanged code for tokens'
       );
 
@@ -159,7 +166,7 @@ export class OAuthClient {
       };
     } catch (err) {
       logger.error(
-        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) } },
+        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) }, sessionId: session.id },
         'Failed to exchange code for tokens'
       );
       throw err;
@@ -175,6 +182,8 @@ export class OAuthClient {
     if (!currentTokens) {
       throw new Error('No tokens found in session');
     }
+
+    const msalClient = this.getMsalClient(session.id);
 
     try {
       // MSAL caches accounts, try to get silently
@@ -202,12 +211,12 @@ export class OAuthClient {
         scope: result.scopes.join(' '),
       };
 
-      logger.info({ userId: session.userId }, 'Successfully refreshed tokens');
+      logger.info({ userId: session.userId, sessionId: session.id }, 'Successfully refreshed tokens');
 
       return tokens;
     } catch (err) {
       logger.error(
-        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) } },
+        { err: err instanceof Error ? { message: err.message, name: err.name } : { message: String(err) }, sessionId: session.id },
         'Failed to refresh tokens'
       );
       throw err;

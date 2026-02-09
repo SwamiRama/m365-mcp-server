@@ -4,6 +4,7 @@ import {
   type GraphSite,
   type GraphDrive,
   type GraphDriveItem,
+  type SearchHit,
 } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
 import { isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
@@ -25,10 +26,26 @@ export const listDrivesInputSchema = z.object({
   site_id: z
     .string()
     .regex(graphIdPattern, 'Invalid site ID format')
-    .optional()
     .describe(
-      "Site ID to list drives from. If not provided, lists the user's personal OneDrive."
+      "Site ID to list drives from. MUST be the exact 'id' from sp_list_sites. Always call sp_list_sites first."
     ),
+});
+
+export const searchFilesInputSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .max(512)
+    .describe(
+      'Search query (supports KQL). Examples: "Ersthelfer Berlin", "filename:budget.xlsx", "filetype:pdf quarterly report"'
+    ),
+  size: z
+    .number()
+    .int()
+    .min(1)
+    .max(25)
+    .optional()
+    .describe('Number of results to return (default: 10, max: 25)'),
 });
 
 export const listChildrenInputSchema = z.object({
@@ -52,6 +69,7 @@ export type ListSitesInput = z.infer<typeof listSitesInputSchema>;
 export type ListDrivesInput = z.infer<typeof listDrivesInputSchema>;
 export type ListChildrenInput = z.infer<typeof listChildrenInputSchema>;
 export type GetFileInput = z.infer<typeof getFileInputSchema>;
+export type SearchFilesInput = z.infer<typeof searchFilesInputSchema>;
 
 // Maximum file size for content retrieval (10MB)
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -151,32 +169,73 @@ export class SharePointTools {
   }
 
   /**
-   * List drives (OneDrive/SharePoint document libraries)
+   * List drives (document libraries) for a SharePoint site
    */
   async listDrives(input: ListDrivesInput): Promise<object> {
     const validated = listDrivesInputSchema.parse(input);
 
     logger.debug({ siteId: validated.site_id }, 'Listing drives');
 
-    if (!validated.site_id) {
-      // Return user's personal OneDrive
-      const drive = await this.graphClient.getMyDrive();
-      return {
-        drives: [formatDrive(drive)],
-        count: 1,
-        source: 'personal_onedrive',
-        _note: `This is your personal OneDrive. Use drive_id='${drive.id}' with sp_list_children to browse files.`,
-      };
-    }
-
-    const drives = await this.graphClient.listDrives(validated.site_id);
+    const drives = await this.graphClient.listSiteDrives(validated.site_id);
 
     return {
       drives: drives.map(formatDrive),
       count: drives.length,
-      source: 'sharepoint_site',
       site_id: validated.site_id,
-      _note: 'Use the drive id values from this response with sp_list_children to browse files.',
+      _note: 'Use the drive id values from this response with sp_list_children to browse files, or use sp_get_file to read a file.',
+    };
+  }
+
+  /**
+   * Search for files across all SharePoint sites and OneDrive
+   */
+  async searchFiles(input: SearchFilesInput): Promise<object> {
+    const validated = searchFilesInputSchema.parse(input);
+    const size = validated.size ?? 10;
+
+    logger.debug({ query: validated.query, size }, 'Searching files');
+
+    const result = await this.graphClient.searchDriveItems({
+      query: validated.query,
+      size,
+    });
+
+    const items = result.hits.map((hit: SearchHit) => {
+      const resource = hit.resource;
+      const formatted: Record<string, unknown> = {
+        name: resource.name,
+        webUrl: resource.webUrl,
+        lastModified: resource.lastModifiedDateTime,
+        size: resource.size,
+      };
+
+      // Include drive/item IDs so LLM can call sp_get_file directly
+      if (resource.parentReference?.driveId) {
+        formatted['drive_id'] = resource.parentReference.driveId;
+      }
+      formatted['item_id'] = resource.id;
+
+      if (resource.file) {
+        formatted['type'] = 'file';
+        formatted['mimeType'] = resource.file.mimeType;
+      } else if (resource.folder) {
+        formatted['type'] = 'folder';
+      }
+
+      // Include search snippet if available
+      if (hit.summary) {
+        // Clean up highlight tags from summary
+        formatted['summary'] = hit.summary.replace(/<\/?c0>/g, '');
+      }
+
+      return formatted;
+    });
+
+    return {
+      results: items,
+      total: result.total,
+      moreResultsAvailable: result.moreResultsAvailable,
+      _note: 'Use drive_id and item_id with sp_get_file to retrieve file content. Use sp_list_children with drive_id to browse folders.',
     };
   }
 
@@ -331,9 +390,28 @@ export class SharePointTools {
 // Tool definitions for MCP registration
 export const sharePointToolDefinitions = [
   {
+    name: 'sp_search',
+    description:
+      'Search for files across ALL SharePoint sites and OneDrive. This is the FASTEST way to find documents. Supports KQL syntax. Returns drive_id and item_id that can be passed directly to sp_get_file. Use this FIRST when the user asks about document content (e.g. "Wer sind die Ersthelfer?", "find the budget report"). Examples: "Ersthelfer Berlin", "filename:budget.xlsx", "filetype:pdf quarterly".',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query. Supports KQL: "Ersthelfer Berlin", "filename:report.docx", "filetype:pdf budget".',
+        },
+        size: {
+          type: 'number',
+          description: 'Number of results (default: 10, max: 25)',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'sp_list_sites',
     description:
-      'Search and list SharePoint sites accessible to the user. Returns site IDs that MUST be used as-is in sp_list_drives. Always call this first before accessing any SharePoint site content.',
+      'List SharePoint sites accessible to the user. Returns site IDs needed for sp_list_drives. Use this when the user wants to browse a specific site, NOT when searching for document content (use sp_search instead).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -347,33 +425,34 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_list_drives',
     description:
-      "List document libraries/drives for a SharePoint site. Without a site_id, returns the user's personal OneDrive. IMPORTANT: The site_id MUST be the exact 'id' value returned by sp_list_sites (format: 'hostname,siteCollectionId,siteId'). Do not construct or guess site IDs.",
+      "List document libraries (drives) for a specific SharePoint site. REQUIRES site_id from sp_list_sites. Use this to browse a site's document libraries before listing files with sp_list_children.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         site_id: {
           type: 'string',
           description:
-            "The exact site ID from an sp_list_sites response (e.g., 'contoso.sharepoint.com,guid1,guid2'). Do not guess or construct this value.",
+            "REQUIRED. The exact site ID from sp_list_sites (format: 'hostname,guid1,guid2'). Do not guess this value.",
         },
       },
+      required: ['site_id'],
     },
   },
   {
     name: 'sp_list_children',
     description:
-      'List files and folders in a drive. Provide item_id to list contents of a specific folder, or omit for root. IMPORTANT: drive_id MUST be the exact ID from an sp_list_drives response. item_id MUST be from a previous sp_list_children response.',
+      'List files and folders in a drive. Use for browsing folder contents. Provide item_id for a subfolder, or omit for root. drive_id MUST come from sp_list_drives or sp_search.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         drive_id: {
           type: 'string',
-          description: 'The exact drive ID from an sp_list_drives response. Do not guess or construct this value.',
+          description: 'The exact drive ID from sp_list_drives or sp_search. Do not guess.',
         },
         item_id: {
           type: 'string',
           description:
-            'The exact folder ID from a previous sp_list_children response. If not provided, lists root folder contents.',
+            'Folder ID from sp_list_children. Omit to list root folder.',
         },
       },
       required: ['drive_id'],
@@ -382,17 +461,17 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_get_file',
     description:
-      'Get file metadata and content. Text files are returned as text. PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) are automatically parsed to extract readable text. Other binary files are returned as base64. Maximum size: 10MB. IMPORTANT: drive_id and item_id MUST come from previous sp_list_drives / sp_list_children responses.',
+      'Get file content. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are automatically parsed to readable text. Max 10MB. Use drive_id + item_id from sp_search or sp_list_children.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         drive_id: {
           type: 'string',
-          description: 'The exact drive ID from an sp_list_drives response.',
+          description: 'Drive ID from sp_search, sp_list_drives, or sp_list_children.',
         },
         item_id: {
           type: 'string',
-          description: 'The exact file ID from an sp_list_children response.',
+          description: 'File ID from sp_search or sp_list_children.',
         },
       },
       required: ['drive_id', 'item_id'],

@@ -130,7 +130,7 @@ export const GRAPH_SCOPES = [
   'https://graph.microsoft.com/User.Read',
   'https://graph.microsoft.com/Mail.Read',
   'https://graph.microsoft.com/Mail.Read.Shared',
-  'https://graph.microsoft.com/Files.Read',
+  'https://graph.microsoft.com/Files.Read.All',
   'https://graph.microsoft.com/Sites.Read.All',
 ];
 
