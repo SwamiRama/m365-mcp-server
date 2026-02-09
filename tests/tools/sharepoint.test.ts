@@ -494,6 +494,36 @@ describe('SharePoint Tools', () => {
       expect(result['contentError']).toContain('folder, not a file');
     });
 
+    it('should fetch content when search result has no file/folder facet (Graph Search API quirk)', async () => {
+      // Graph Search API often omits the file and folder facets from driveItem results
+      (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hits: [{
+          hitId: 'nofacet-hit',
+          rank: 1,
+          resource: {
+            id: 'item-no-facet',
+            name: 'GBAusz_Neuss.pdf',
+            size: 289220,
+            webUrl: 'https://contoso.sharepoint.com/sites/Test/Documents/GBAusz_Neuss.pdf',
+            lastModifiedDateTime: '2023-02-06T10:15:05Z',
+            // NOTE: no file and no folder property — this is the real-world scenario
+            parentReference: { driveId: 'drive-abc-123' },
+          },
+        }],
+        total: 1,
+        moreResultsAvailable: false,
+      });
+
+      const result = await spTools.searchAndRead({ query: 'GBAusz Neuss' }) as Record<string, unknown>;
+
+      expect(result['found']).toBe(true);
+      expect(result['name']).toBe('GBAusz_Neuss.pdf');
+      // Should attempt to fetch content, not reject as folder
+      expect(result['contentError'] ?? '').not.toContain('folder');
+      // getFileContent should have been called with the IDs from the search hit
+      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith('drive-abc-123', 'item-no-facet', expect.any(Number));
+    });
+
     it('should handle file too large gracefully', async () => {
       (mockGraphClient.searchDriveItems as ReturnType<typeof vi.fn>).mockResolvedValue({
         hits: [{

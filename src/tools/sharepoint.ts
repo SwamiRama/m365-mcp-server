@@ -345,11 +345,13 @@ export class SharePointTools {
         size: resource.size,
       };
 
-      if (resource.file) {
-        formatted['type'] = 'file';
-        formatted['mimeType'] = resource.file.mimeType;
-      } else if (resource.folder) {
+      if (resource.folder) {
         formatted['type'] = 'folder';
+      } else {
+        formatted['type'] = 'file';
+        if (resource.file?.mimeType) {
+          formatted['mimeType'] = resource.file.mimeType;
+        }
       }
 
       // Include search snippet if available
@@ -369,7 +371,7 @@ export class SharePointTools {
       formatted['item_id'] = itemId;
 
       // Anti-hallucination: embed the exact call the LLM should make
-      if (driveId && itemId && resource.file) {
+      if (driveId && itemId && !resource.folder) {
         formatted['action'] = `To read this file: sp_get_file(drive_id="${driveId}", item_id="${itemId}")`;
       }
 
@@ -463,7 +465,7 @@ export class SharePointTools {
       return result;
     }
 
-    if (!resource.file) {
+    if (resource.folder) {
       result['content'] = null;
       result['contentError'] = 'Search result is a folder, not a file.';
       return result;
