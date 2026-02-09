@@ -17,6 +17,7 @@ import { bearerAuthMiddleware } from './oauth/middleware.js';
 import { audit } from './utils/audit.js';
 import { mapGraphError } from './utils/graph-errors.js';
 import { pingRedis, closeRedis } from './utils/redis.js';
+import { touchMsalCache } from './auth/msal-cache-plugin.js';
 
 const app = express();
 
@@ -596,6 +597,9 @@ async function handleToolsCall(
         );
       }
     }
+
+    // Keep MSAL cache alive even when tokens don't need refresh
+    touchMsalCache(req.session.id).catch(() => {});
 
     // Create Graph client and tool executor
     // Pass user context so tools can include the user's identity in responses,

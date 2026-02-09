@@ -45,6 +45,30 @@ export interface TokenExchangeResult {
   userDisplayName?: string;
 }
 
+/**
+ * Extract the Azure AD refresh token from MSAL's serialized cache.
+ * The RT is not exposed on AuthenticationResult, but lives inside
+ * the serialized cache under the RefreshToken key.
+ */
+function extractRefreshTokenFromCache(msalClient: ConfidentialClientApplication): string | undefined {
+  try {
+    const cacheData = msalClient.getTokenCache().serialize();
+    const cacheJson = JSON.parse(cacheData) as {
+      RefreshToken?: Record<string, { secret?: string }>;
+    };
+    const rtEntries = Object.values(cacheJson.RefreshToken ?? {});
+    if (rtEntries.length > 0 && rtEntries[0]?.secret) {
+      return rtEntries[0].secret;
+    }
+  } catch (err) {
+    logger.debug(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Could not extract refresh token from MSAL cache'
+    );
+  }
+  return undefined;
+}
+
 export class OAuthClient {
   private endpoints = getOAuthEndpoints(config.azureTenantId);
 
@@ -140,9 +164,12 @@ export class OAuthClient {
         throw new Error('Token acquisition returned null');
       }
 
+      // Extract refresh token from MSAL cache as fallback for cache loss scenarios
+      const azureRefreshToken = extractRefreshTokenFromCache(msalClient);
+
       const tokens: TokenSet = {
         accessToken: result.accessToken,
-        refreshToken: undefined, // MSAL handles refresh internally, but we need it for manual control
+        refreshToken: azureRefreshToken,
         expiresAt: result.expiresOn?.getTime() ?? Date.now() + 3600 * 1000,
         scope: result.scopes.join(' '),
       };
@@ -154,7 +181,7 @@ export class OAuthClient {
       const userDisplayName = account?.name;
 
       logger.info(
-        { userId, sessionId: session.id, hasRefreshToken: false },
+        { userId, sessionId: session.id, hasRefreshToken: !!azureRefreshToken },
         'Successfully exchanged code for tokens'
       );
 
@@ -191,6 +218,31 @@ export class OAuthClient {
       const account = accounts.find((a) => a.localAccountId === session.userId);
 
       if (!account) {
+        // Fallback: use stored refresh token to recover from MSAL cache loss
+        if (currentTokens.refreshToken) {
+          logger.info({ sessionId: session.id }, 'MSAL cache miss - using stored refresh token as fallback');
+
+          const fallbackResult = await msalClient.acquireTokenByRefreshToken({
+            scopes: GRAPH_SCOPES,
+            refreshToken: currentTokens.refreshToken,
+            forceCache: true, // Repopulate MSAL cache with the new account/tokens
+          });
+
+          if (!fallbackResult) {
+            throw new Error('Fallback token refresh returned null - re-authentication required');
+          }
+
+          // Azure AD may rotate the refresh token; extract the latest one
+          const newRefreshToken = extractRefreshTokenFromCache(msalClient) ?? currentTokens.refreshToken;
+
+          return {
+            accessToken: fallbackResult.accessToken,
+            refreshToken: newRefreshToken,
+            expiresAt: fallbackResult.expiresOn?.getTime() ?? Date.now() + 3600 * 1000,
+            scope: fallbackResult.scopes.join(' '),
+          };
+        }
+
         throw new Error('Account not found in cache - re-authentication required');
       }
 
@@ -204,9 +256,12 @@ export class OAuthClient {
         throw new Error('Silent token acquisition returned null');
       }
 
+      // Update stored refresh token in case it was rotated
+      const latestRefreshToken = extractRefreshTokenFromCache(msalClient) ?? currentTokens.refreshToken;
+
       const tokens: TokenSet = {
         accessToken: result.accessToken,
-        refreshToken: currentTokens.refreshToken, // Keep existing refresh token
+        refreshToken: latestRefreshToken,
         expiresAt: result.expiresOn?.getTime() ?? Date.now() + 3600 * 1000,
         scope: result.scopes.join(' '),
       };

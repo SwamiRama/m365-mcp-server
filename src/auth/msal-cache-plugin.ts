@@ -20,7 +20,12 @@ async function readCache(partitionKey: string): Promise<string | null> {
   const redis = getRedisClient();
   const key = `${BASE_REDIS_KEY}:${partitionKey}`;
   if (redis) {
-    return redis.get(key);
+    const data = await redis.get(key);
+    if (data) {
+      // Refresh TTL on read to prevent cache expiry while session is still active
+      redis.expire(key, TTL_SECONDS).catch(() => {});
+    }
+    return data;
   }
   return memoryCache.get(key) ?? null;
 }
@@ -33,6 +38,19 @@ async function writeCache(partitionKey: string, data: string): Promise<void> {
   } else {
     memoryCache.set(key, data);
   }
+}
+
+/**
+ * Touch the MSAL cache TTL without reading/deserializing the data.
+ * Called on every tool invocation to keep the cache alive even when
+ * Azure AD tokens are still valid and no MSAL client is instantiated.
+ */
+export async function touchMsalCache(partitionKey: string): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+
+  const key = `${BASE_REDIS_KEY}:${partitionKey}`;
+  await redis.expire(key, TTL_SECONDS);
 }
 
 export function createMsalCachePlugin(partitionKey: string): ICachePlugin {
