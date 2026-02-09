@@ -61,6 +61,20 @@ describe('Mail Tools', () => {
       expect(result).toHaveProperty('count', 2);
     });
 
+    it('should include mailbox_context "personal" when no mailbox specified', async () => {
+      const result = await mailTools.listMessages({}) as Record<string, unknown>;
+
+      expect(result['mailbox_context']).toBe('personal');
+      expect(result['_note']).toContain('do NOT pass');
+    });
+
+    it('should include mailbox_context with shared mailbox value', async () => {
+      const result = await mailTools.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
+
+      expect(result['mailbox_context']).toBe('shared@example.com');
+      expect(result['_note']).toContain("mailbox='shared@example.com'");
+    });
+
     it('should resolve well-known folder names', async () => {
       await mailTools.listMessages({ folder: 'sent' });
 
@@ -112,6 +126,42 @@ describe('Mail Tools', () => {
 
       expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true, undefined);
       expect(result).toHaveProperty('body');
+    });
+
+    it('should throw enriched error for ErrorInvalidMailboxItemId with mailbox', async () => {
+      const graphError = Object.assign(new Error("Item doesn't belong to the targeted mailbox"), {
+        code: 'ErrorInvalidMailboxItemId',
+        statusCode: 404,
+      });
+      (mockGraphClient.getMessage as ReturnType<typeof vi.fn>).mockRejectedValue(graphError);
+
+      await expect(
+        mailTools.getMessage({ message_id: 'msg-1', mailbox: 'shared@example.com' })
+      ).rejects.toThrow(/does not belong to mailbox 'shared@example.com'/);
+    });
+
+    it('should throw enriched error for ErrorInvalidMailboxItemId without mailbox', async () => {
+      const graphError = Object.assign(new Error("Item doesn't belong to the targeted mailbox"), {
+        code: 'ErrorInvalidMailboxItemId',
+        statusCode: 404,
+      });
+      (mockGraphClient.getMessage as ReturnType<typeof vi.fn>).mockRejectedValue(graphError);
+
+      await expect(
+        mailTools.getMessage({ message_id: 'msg-1' })
+      ).rejects.toThrow(/does not belong to your personal mailbox/);
+    });
+
+    it('should re-throw non-ErrorInvalidMailboxItemId errors unchanged', async () => {
+      const graphError = Object.assign(new Error('Server error'), {
+        code: 'InternalServerError',
+        statusCode: 500,
+      });
+      (mockGraphClient.getMessage as ReturnType<typeof vi.fn>).mockRejectedValue(graphError);
+
+      await expect(
+        mailTools.getMessage({ message_id: 'msg-1' })
+      ).rejects.toThrow('Server error');
     });
   });
 

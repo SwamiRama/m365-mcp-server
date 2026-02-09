@@ -167,6 +167,10 @@ export class MailTools {
       messages: result.messages.map((m) => formatMessage(m)),
       count: result.messages.length,
       hasMore: !!result.nextLink,
+      mailbox_context: validated.mailbox ?? 'personal',
+      _note: validated.mailbox
+        ? `These message IDs belong to mailbox '${validated.mailbox}'. When calling mail_get_message, pass mailbox='${validated.mailbox}'.`
+        : "These message IDs belong to your personal mailbox. When calling mail_get_message, do NOT pass a 'mailbox' parameter.",
     };
   }
 
@@ -181,13 +185,28 @@ export class MailTools {
       'Getting message'
     );
 
-    const message = await this.graphClient.getMessage(
-      validated.message_id,
-      validated.include_body,
-      validated.mailbox
-    );
+    try {
+      const message = await this.graphClient.getMessage(
+        validated.message_id,
+        validated.include_body,
+        validated.mailbox
+      );
 
-    return formatMessage(message, validated.include_body);
+      return formatMessage(message, validated.include_body);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'ErrorInvalidMailboxItemId') {
+        const hint = validated.mailbox
+          ? `The message ID does not belong to mailbox '${validated.mailbox}'. This message was likely listed from your personal mailbox (no mailbox parameter). Retry: call mail_get_message with the same message_id but WITHOUT the mailbox parameter.`
+          : `The message ID does not belong to your personal mailbox. It was likely listed from a shared mailbox. Retry: call mail_list_messages to get the correct mailbox_context, then call mail_get_message with that mailbox parameter.`;
+
+        const enrichedError = new Error(hint) as Error & { code?: string; statusCode?: number };
+        enrichedError.code = code;
+        enrichedError.statusCode = (err as { statusCode?: number }).statusCode;
+        throw enrichedError;
+      }
+      throw err;
+    }
   }
 
   /**

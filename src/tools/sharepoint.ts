@@ -164,6 +164,8 @@ export class SharePointTools {
       return {
         drives: [formatDrive(drive)],
         count: 1,
+        source: 'personal_onedrive',
+        _note: `This is your personal OneDrive. Use drive_id='${drive.id}' with sp_list_children to browse files.`,
       };
     }
 
@@ -172,6 +174,9 @@ export class SharePointTools {
     return {
       drives: drives.map(formatDrive),
       count: drives.length,
+      source: 'sharepoint_site',
+      site_id: validated.site_id,
+      _note: 'Use the drive id values from this response with sp_list_children to browse files.',
     };
   }
 
@@ -186,15 +191,35 @@ export class SharePointTools {
       'Listing drive items'
     );
 
-    const items = await this.graphClient.listDriveItems({
-      driveId: validated.drive_id,
-      itemId: validated.item_id,
-    });
+    try {
+      const items = await this.graphClient.listDriveItems({
+        driveId: validated.drive_id,
+        itemId: validated.item_id,
+      });
 
-    return {
-      items: items.map(formatDriveItem),
-      count: items.length,
-    };
+      return {
+        items: items.map(formatDriveItem),
+        count: items.length,
+        drive_id: validated.drive_id,
+        item_id: validated.item_id ?? 'root',
+      };
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      const statusCode = (err as { statusCode?: number }).statusCode;
+
+      if (code === 'itemNotFound' || (statusCode === 404 && !code)) {
+        const target = validated.item_id
+          ? `item '${validated.item_id}' in drive '${validated.drive_id}'`
+          : `root of drive '${validated.drive_id}'`;
+        const hint = `Item not found: ${target}. The drive_id or item_id may be stale or from a previous session. Remediation: call sp_list_drives to get a fresh drive_id, then call sp_list_children with the new drive_id.`;
+
+        const enrichedError = new Error(hint) as Error & { code?: string; statusCode?: number };
+        enrichedError.code = code ?? 'itemNotFound';
+        enrichedError.statusCode = statusCode ?? 404;
+        throw enrichedError;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -209,10 +234,24 @@ export class SharePointTools {
     );
 
     // Get file metadata first
-    const item = await this.graphClient.getDriveItem(
-      validated.drive_id,
-      validated.item_id
-    );
+    let item;
+    try {
+      item = await this.graphClient.getDriveItem(
+        validated.drive_id,
+        validated.item_id
+      );
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      const statusCode = (err as { statusCode?: number }).statusCode;
+      if (code === 'itemNotFound' || (statusCode === 404 && !code)) {
+        const hint = `File not found: item '${validated.item_id}' in drive '${validated.drive_id}'. The IDs may be stale. Remediation: call sp_list_children with the drive_id to get fresh item IDs, then retry sp_get_file.`;
+        const enrichedError = new Error(hint) as Error & { code?: string; statusCode?: number };
+        enrichedError.code = code ?? 'itemNotFound';
+        enrichedError.statusCode = statusCode ?? 404;
+        throw enrichedError;
+      }
+      throw err;
+    }
 
     if (!item.file) {
       throw new Error('The specified item is not a file');

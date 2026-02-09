@@ -15,6 +15,7 @@ import { ToolExecutor, allToolDefinitions } from './tools/index.js';
 import { oauthRouter } from './oauth/routes.js';
 import { bearerAuthMiddleware } from './oauth/middleware.js';
 import { audit } from './utils/audit.js';
+import { mapGraphError } from './utils/graph-errors.js';
 import { pingRedis, closeRedis } from './utils/redis.js';
 
 const app = express();
@@ -619,21 +620,23 @@ async function handleToolsCall(
       isError: false,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const code = (err as { statusCode?: number }).statusCode;
-    const apiCode = (err as { code?: string }).code;
     const toolName = params?.['name'] as string | undefined;
+    const mapped = mapGraphError(err);
 
-    req.log.warn({ err: err instanceof Error ? err : { message: String(err) }, toolName, statusCode: code, apiCode }, 'Tool execution failed');
+    req.log.warn(
+      { err: err instanceof Error ? err : { message: String(err) }, toolName, statusCode: mapped.statusCode, apiCode: mapped.code },
+      'Tool execution failed'
+    );
 
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            error: message,
-            code: apiCode ?? undefined,
-            statusCode: code ?? undefined,
+            error: mapped.error,
+            code: mapped.code ?? undefined,
+            statusCode: mapped.statusCode ?? undefined,
+            remediation: mapped.remediation,
           }),
         },
       ],
