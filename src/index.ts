@@ -23,7 +23,7 @@ const app = express();
 
 // Trust proxy - required when running behind reverse proxy (Azure Container Apps, nginx, etc.)
 // This ensures correct client IP detection for rate limiting and secure cookies
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 
 // =============================================================================
 // Middleware
@@ -79,6 +79,7 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
+  validate: { trustProxy: false },
 });
 app.use(limiter);
 

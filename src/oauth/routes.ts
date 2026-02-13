@@ -85,6 +85,7 @@ const dcrRateLimit = rateLimit({
     error: 'too_many_requests',
     error_description: 'Too many registration attempts. Try again later.',
   },
+  validate: { trustProxy: false },
 });
 
 oauthRouter.post('/register', dcrRateLimit, async (req: Request, res: Response): Promise<void> => {
@@ -222,6 +223,17 @@ oauthRouter.get('/authorize', async (req: Request, res: Response): Promise<void>
     return;
   }
 
+  // Validate redirect_uri is a well-formed URL before using it in redirects
+  try {
+    new URL(redirect_uri);
+  } catch {
+    res.status(400).json({
+      error: 'invalid_redirect_uri',
+      error_description: 'redirect_uri is not a valid URL',
+    });
+    return;
+  }
+
   // From here on, we can redirect errors to the client
 
   // Validate state (required for CSRF protection)
@@ -319,6 +331,7 @@ oauthRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<
   // Get session from cookie
   const sessionId = req.cookies?.['mcp-oauth-session'] as string | undefined;
   if (!sessionId) {
+    req.log.warn({ event: 'oauth.callback_no_cookie', ip: req.ip }, 'OAuth callback: session cookie missing');
     res.status(400).json({
       error: 'invalid_session',
       error_description: 'OAuth session not found',
@@ -328,6 +341,7 @@ oauthRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<
 
   const session = await sessionManager.getSession(sessionId);
   if (!session) {
+    req.log.warn({ event: 'oauth.callback_session_expired', sessionId, ip: req.ip }, 'OAuth callback: session not found in store');
     res.status(400).json({
       error: 'invalid_session',
       error_description: 'Session expired or invalid',
@@ -338,6 +352,7 @@ oauthRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<
   // Get pending authorization
   const pending = await getPendingAuthorization(session.id);
   if (!pending) {
+    req.log.warn({ event: 'oauth.callback_no_pending', sessionId: session.id, ip: req.ip }, 'OAuth callback: no pending authorization');
     res.status(400).json({
       error: 'invalid_request',
       error_description: 'No pending authorization found',
@@ -422,7 +437,7 @@ oauthRouter.get('/oauth/callback', async (req: Request, res: Response): Promise<
 
     res.redirect(successUrl.toString());
   } catch (err) {
-    req.log.error({ err }, 'Token exchange failed');
+    req.log.error({ err, clientId: pending.clientId, redirectUri: pending.redirectUri }, 'Token exchange failed');
 
     const errorUrl = new URL(pending.redirectUri);
     errorUrl.searchParams.set('error', 'server_error');

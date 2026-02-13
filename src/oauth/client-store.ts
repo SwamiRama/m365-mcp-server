@@ -54,8 +54,8 @@ class RedisClientStore implements ClientStore {
   }
 
   async set(clientId: string, client: OAuthClient): Promise<void> {
-    // Clients don't expire by default
-    await this.client.set(this.prefix + clientId, JSON.stringify(client));
+    // 30-day TTL - clients re-register via DCR when expired
+    await this.client.setex(this.prefix + clientId, 30 * 24 * 60 * 60, JSON.stringify(client));
   }
 
   async delete(clientId: string): Promise<void> {
