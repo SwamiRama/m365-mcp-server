@@ -122,13 +122,6 @@ function generateClientId(): string {
 }
 
 /**
- * Generate a secure client secret
- */
-function generateClientSecret(): string {
-  return crypto.randomBytes(32).toString('base64url');
-}
-
-/**
  * Hash a client secret for storage
  */
 function hashClientSecret(secret: string): string {
