@@ -103,6 +103,7 @@ export AZURE_CLIENT_SECRET="your-secret-value-here"
 | `Mail.Read.Shared` | Mail | Read shared mailbox mail | **Yes** |
 | `Files.Read` | Files | Read user files | No |
 | `Sites.Read.All` | Sites | Read SharePoint sites | No |
+| `Calendars.Read` | Calendar | Read user calendars and events | No |
 
 ### Adding Permissions
 
@@ -114,6 +115,7 @@ Search and add each permission:
 5. Search: `Mail.Read.Shared` → Check → Add permissions
 6. Search: `Files.Read` → Check → Add permissions
 7. Search: `Sites.Read.All` → Check → Add permissions
+8. Search: `Calendars.Read` → Check → Add permissions
 
 ### Permission Summary
 
@@ -125,6 +127,7 @@ After adding, your permissions should look like:
 | Microsoft Graph | Mail.Read | Delegated | ⏳ Not granted |
 | Microsoft Graph | Mail.Read.Shared | Delegated | ⏳ Not granted |
 | Microsoft Graph | Sites.Read.All | Delegated | ⏳ Not granted |
+| Microsoft Graph | Calendars.Read | Delegated | ⏳ Not granted |
 | Microsoft Graph | offline_access | Delegated | ⏳ Not granted |
 | Microsoft Graph | openid | Delegated | ⏳ Not granted |
 | Microsoft Graph | User.Read | Delegated | ✅ Granted |
@@ -188,12 +191,12 @@ Token:         https://login.microsoftonline.com/common/oauth2/v2.0/token
 When requesting authorization, use these scope strings:
 
 ```
-openid offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.Read.Shared https://graph.microsoft.com/Files.Read https://graph.microsoft.com/Sites.Read.All
+openid offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.Read.Shared https://graph.microsoft.com/Files.Read https://graph.microsoft.com/Sites.Read.All https://graph.microsoft.com/Calendars.Read
 ```
 
 Or in URL-encoded format:
 ```
-scope=openid%20offline_access%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read.Shared%20https%3A%2F%2Fgraph.microsoft.com%2FFiles.Read%20https%3A%2F%2Fgraph.microsoft.com%2FSites.Read.All
+scope=openid%20offline_access%20https%3A%2F%2Fgraph.microsoft.com%2FUser.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read%20https%3A%2F%2Fgraph.microsoft.com%2FMail.Read.Shared%20https%3A%2F%2Fgraph.microsoft.com%2FFiles.Read%20https%3A%2F%2Fgraph.microsoft.com%2FSites.Read.All%20https%3A%2F%2Fgraph.microsoft.com%2FCalendars.Read
 ```
 
 ## PKCE Requirements

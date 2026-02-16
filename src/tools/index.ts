@@ -1,26 +1,31 @@
 import { GraphClient } from '../graph/client.js';
 import { MailTools, mailToolDefinitions, type ListMessagesInput, type GetMessageInput, type UserContext } from './mail.js';
 import { SharePointTools, sharePointToolDefinitions, type ListSitesInput, type ListDrivesInput, type ListChildrenInput, type GetFileInput, type SearchFilesInput, type SearchAndReadInput } from './sharepoint.js';
+import { CalendarTools, calendarToolDefinitions, type ListEventsInput, type GetEventInput } from './calendar.js';
 
 // Re-export tool definitions and types
 export { mailToolDefinitions } from './mail.js';
 export { sharePointToolDefinitions } from './sharepoint.js';
+export { calendarToolDefinitions } from './calendar.js';
 export type { UserContext } from './mail.js';
 
 // Combined tool definitions
 export const allToolDefinitions = [
   ...mailToolDefinitions,
   ...sharePointToolDefinitions,
+  ...calendarToolDefinitions,
 ];
 
 // Tool executor class that wraps all tools
 export class ToolExecutor {
   private mailTools: MailTools;
   private sharePointTools: SharePointTools;
+  private calendarTools: CalendarTools;
 
   constructor(graphClient: GraphClient, userContext?: UserContext) {
     this.mailTools = new MailTools(graphClient, userContext);
     this.sharePointTools = new SharePointTools(graphClient);
+    this.calendarTools = new CalendarTools(graphClient);
   }
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<object> {
@@ -46,6 +51,14 @@ export class ToolExecutor {
         return this.sharePointTools.listChildren(args as ListChildrenInput);
       case 'sp_get_file':
         return this.sharePointTools.getFile(args as GetFileInput);
+
+      // Calendar tools
+      case 'cal_list_calendars':
+        return this.calendarTools.listCalendars();
+      case 'cal_list_events':
+        return this.calendarTools.listEvents(args as ListEventsInput);
+      case 'cal_get_event':
+        return this.calendarTools.getEvent(args as GetEventInput);
 
       default:
         throw new Error(`Unknown tool: ${toolName}`);

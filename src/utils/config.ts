@@ -132,6 +132,7 @@ export const GRAPH_SCOPES = [
   'https://graph.microsoft.com/Mail.Read.Shared',
   'https://graph.microsoft.com/Files.Read.All',
   'https://graph.microsoft.com/Sites.Read.All',
+  'https://graph.microsoft.com/Calendars.Read',
 ];
 
 // OAuth endpoints

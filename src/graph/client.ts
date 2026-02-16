@@ -48,6 +48,75 @@ export interface GraphMailFolder {
   totalItemCount?: number;
 }
 
+export interface GraphCalendar {
+  id: string;
+  name?: string;
+  color?: string;
+  isDefaultCalendar?: boolean;
+  canEdit?: boolean;
+  owner?: {
+    name?: string;
+    address?: string;
+  };
+}
+
+export interface GraphCalendarEvent {
+  id: string;
+  subject?: string;
+  bodyPreview?: string;
+  body?: {
+    contentType: string;
+    content: string;
+  };
+  start?: {
+    dateTime: string;
+    timeZone: string;
+  };
+  end?: {
+    dateTime: string;
+    timeZone: string;
+  };
+  location?: {
+    displayName?: string;
+    address?: {
+      street?: string;
+      city?: string;
+      state?: string;
+      countryOrRegion?: string;
+      postalCode?: string;
+    };
+    coordinates?: {
+      latitude?: number;
+      longitude?: number;
+    };
+  };
+  organizer?: {
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  };
+  attendees?: Array<{
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+    status?: {
+      response?: string;
+      time?: string;
+    };
+    type?: string;
+  }>;
+  isAllDay?: boolean;
+  showAs?: string;
+  importance?: string;
+  webLink?: string;
+  onlineMeeting?: {
+    joinUrl?: string;
+  };
+  recurrence?: unknown;
+}
+
 export interface GraphSite {
   id: string;
   name?: string;
@@ -471,6 +540,95 @@ export class GraphClient {
       'getDriveItem'
     );
   }
+
+  // === Calendar Operations ===
+
+  async listCalendars(): Promise<GraphCalendar[]> {
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api('/me/calendars')
+          .select('id,name,color,isDefaultCalendar,canEdit,owner')
+          .header('Prefer', 'outlook.timezone="UTC"')
+          .get(),
+      'listCalendars'
+    );
+
+    return result.value ?? [];
+  }
+
+  async listEvents(options: {
+    calendarId?: string;
+    top?: number;
+    filter?: string;
+    orderBy?: string;
+  }): Promise<GraphCalendarEvent[]> {
+    const { calendarId, top = 25, filter, orderBy } = options;
+
+    const endpoint = calendarId
+      ? `/me/calendars/${calendarId}/events`
+      : '/me/events';
+
+    let request = this.client
+      .api(endpoint)
+      .top(top)
+      .select(
+        'id,subject,bodyPreview,start,end,location,organizer,attendees,isAllDay,showAs,importance,webLink,onlineMeeting,recurrence'
+      )
+      .header('Prefer', 'outlook.timezone="UTC"');
+
+    if (filter) request = request.filter(filter);
+    if (orderBy) request = request.orderby(orderBy);
+
+    const result = await this.executeWithRetry(() => request.get(), 'listEvents');
+
+    return result.value ?? [];
+  }
+
+  async listCalendarView(options: {
+    startDateTime: string;
+    endDateTime: string;
+    calendarId?: string;
+    top?: number;
+    orderBy?: string;
+  }): Promise<GraphCalendarEvent[]> {
+    const { startDateTime, endDateTime, calendarId, top = 25, orderBy } = options;
+
+    const endpoint = calendarId
+      ? `/me/calendars/${calendarId}/calendarView`
+      : '/me/calendarView';
+
+    let request = this.client
+      .api(endpoint)
+      .query({ startDateTime, endDateTime })
+      .top(top)
+      .select(
+        'id,subject,bodyPreview,start,end,location,organizer,attendees,isAllDay,showAs,importance,webLink,onlineMeeting,recurrence'
+      )
+      .header('Prefer', 'outlook.timezone="UTC"');
+
+    if (orderBy) request = request.orderby(orderBy);
+
+    const result = await this.executeWithRetry(() => request.get(), 'listCalendarView');
+
+    return result.value ?? [];
+  }
+
+  async getEvent(eventId: string): Promise<GraphCalendarEvent> {
+    return this.executeWithRetry(
+      () =>
+        this.client
+          .api(`/me/events/${eventId}`)
+          .select(
+            'id,subject,bodyPreview,body,start,end,location,organizer,attendees,isAllDay,showAs,importance,webLink,onlineMeeting,recurrence'
+          )
+          .header('Prefer', 'outlook.timezone="UTC"')
+          .get(),
+      'getEvent'
+    );
+  }
+
+  // === SharePoint/OneDrive Operations (continued) ===
 
   async getFileContent(
     driveId: string,

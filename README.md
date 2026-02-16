@@ -5,6 +5,7 @@ A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, pr
 ## Features
 
 - **Email Access**: List folders, search messages, read email content (including shared mailboxes)
+- **Calendar Access**: List calendars, browse events, expand recurring events with date ranges
 - **SharePoint/OneDrive**: Browse sites, drives, folders, and read file content
 - **Document Parsing**: Extracts readable text from PDF, Word, Excel, PowerPoint, CSV, and HTML files
 - **OAuth 2.1 + PKCE**: Secure authentication via Azure AD/Entra ID
@@ -19,7 +20,7 @@ A production-ready **MCP (Model Context Protocol) server** for Microsoft 365, pr
 
 Follow [docs/entra-app-registration.md](docs/entra-app-registration.md) to create an Azure AD app registration with these permissions:
 - `openid`, `offline_access` (OIDC)
-- `User.Read`, `Mail.Read`, `Mail.Read.Shared`, `Files.Read`, `Sites.Read.All` (Microsoft Graph)
+- `User.Read`, `Mail.Read`, `Mail.Read.Shared`, `Files.Read`, `Sites.Read.All`, `Calendars.Read` (Microsoft Graph)
 
 ### 2. Configuration
 
@@ -133,6 +134,16 @@ All email tools accept an optional `mailbox` parameter (email address or user ID
 | `sp_list_drives` | List drives (OneDrive/document libraries) |
 | `sp_list_children` | List folder contents |
 | `sp_get_file` | Get file content with automatic document parsing (PDF, Word, Excel, PowerPoint → text). Max 10MB |
+
+### Calendar Tools
+
+| Tool | Description |
+|------|-------------|
+| `cal_list_calendars` | List all calendars with metadata |
+| `cal_list_events` | List events with optional date range (expands recurring events) |
+| `cal_get_event` | Get full event details including body/description |
+
+Requires `Calendars.Read` permission (no admin consent needed). Provide `start_date` and `end_date` to expand recurring events into individual occurrences.
 
 ## API Endpoints
 
