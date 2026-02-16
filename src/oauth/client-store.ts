@@ -7,11 +7,21 @@ import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { getRedisClient } from '../utils/redis.js';
-import type { OAuthClient, ClientRegistrationRequest, ClientRegistrationResponse } from './types.js';
+import type { OAuthClient, ClientRegistrationRequest, ClientRegistrationResponse, TokenEndpointAuthMethod } from './types.js';
+
+/**
+ * Hash sorted redirect URIs to create a stable lookup key.
+ * Sorting ensures URI order doesn't matter.
+ */
+export function hashRedirectUris(redirectUris: string[]): string {
+  const sorted = [...redirectUris].sort();
+  return crypto.createHash('sha256').update(sorted.join('\n')).digest('hex');
+}
 
 // Storage interface
 interface ClientStore {
   get(clientId: string): Promise<OAuthClient | null>;
+  getByRedirectUris(redirectUris: string[]): Promise<OAuthClient | null>;
   set(clientId: string, client: OAuthClient): Promise<void>;
   delete(clientId: string): Promise<void>;
 }
@@ -22,6 +32,16 @@ class MemoryClientStore implements ClientStore {
 
   async get(clientId: string): Promise<OAuthClient | null> {
     return this.clients.get(clientId) ?? null;
+  }
+
+  async getByRedirectUris(redirectUris: string[]): Promise<OAuthClient | null> {
+    const hash = hashRedirectUris(redirectUris);
+    for (const client of this.clients.values()) {
+      if (hashRedirectUris(client.redirectUris) === hash) {
+        return client;
+      }
+    }
+    return null;
   }
 
   async set(clientId: string, client: OAuthClient): Promise<void> {
@@ -37,6 +57,8 @@ class MemoryClientStore implements ClientStore {
 class RedisClientStore implements ClientStore {
   private client: Redis;
   private prefix = 'm365-mcp:oauth-client:';
+  private uriIndexPrefix = 'm365-mcp:oauth-uris-index:';
+  private ttlSeconds = 365 * 24 * 60 * 60; // 365 days
 
   constructor(client: Redis) {
     this.client = client;
@@ -53,13 +75,33 @@ class RedisClientStore implements ClientStore {
     }
   }
 
+  async getByRedirectUris(redirectUris: string[]): Promise<OAuthClient | null> {
+    const hash = hashRedirectUris(redirectUris);
+    const clientId = await this.client.get(this.uriIndexPrefix + hash);
+    if (!clientId) return null;
+    return this.get(clientId);
+  }
+
   async set(clientId: string, client: OAuthClient): Promise<void> {
-    // 30-day TTL - clients re-register via DCR when expired
-    await this.client.setex(this.prefix + clientId, 30 * 24 * 60 * 60, JSON.stringify(client));
+    const hash = hashRedirectUris(client.redirectUris);
+    const pipeline = this.client.pipeline();
+    pipeline.setex(this.prefix + clientId, this.ttlSeconds, JSON.stringify(client));
+    pipeline.setex(this.uriIndexPrefix + hash, this.ttlSeconds, clientId);
+    await pipeline.exec();
   }
 
   async delete(clientId: string): Promise<void> {
-    await this.client.del(this.prefix + clientId);
+    // Look up the client first to clean up the URI index
+    const client = await this.get(clientId);
+    if (client) {
+      const hash = hashRedirectUris(client.redirectUris);
+      const pipeline = this.client.pipeline();
+      pipeline.del(this.prefix + clientId);
+      pipeline.del(this.uriIndexPrefix + hash);
+      await pipeline.exec();
+    } else {
+      await this.client.del(this.prefix + clientId);
+    }
   }
 }
 
@@ -68,6 +110,9 @@ const redisClient = getRedisClient();
 const store: ClientStore = redisClient
   ? new RedisClientStore(redisClient)
   : new MemoryClientStore();
+
+// Export for testing
+export { store as _store };
 
 /**
  * Generate a secure client ID
@@ -124,7 +169,8 @@ function validateRedirectUri(uri: string): boolean {
 }
 
 /**
- * Register a new OAuth client (RFC 7591)
+ * Register a new OAuth client (RFC 7591) - idempotent by redirect_uris.
+ * If a client with the same redirect_uris already exists, return it.
  */
 export async function registerClient(request: ClientRegistrationRequest): Promise<ClientRegistrationResponse> {
   // Validate redirect URIs
@@ -138,22 +184,41 @@ export async function registerClient(request: ClientRegistrationRequest): Promis
     }
   }
 
+  // Idempotent: check if a client with these redirect_uris already exists
+  const existing = await store.getByRedirectUris(request.redirect_uris);
+  if (existing) {
+    logger.info(
+      { clientId: existing.clientId, clientName: existing.clientName },
+      'Idempotent DCR: returning existing client for redirect_uris'
+    );
+
+    const response: ClientRegistrationResponse = {
+      client_id: existing.clientId,
+      client_name: existing.clientName,
+      redirect_uris: existing.redirectUris,
+      grant_types: existing.grantTypes,
+      response_types: existing.responseTypes,
+      token_endpoint_auth_method: existing.tokenEndpointAuthMethod,
+      client_id_issued_at: Math.floor(existing.createdAt / 1000),
+      client_secret_expires_at: 0,
+    };
+
+    return response;
+  }
+
   // Generate credentials
   const clientId = generateClientId();
 
   // Defaults per OAuth 2.1
   const grantTypes = request.grant_types ?? ['authorization_code', 'refresh_token'];
   const responseTypes = request.response_types ?? ['code'];
-  const tokenEndpointAuthMethod = request.token_endpoint_auth_method ?? 'none'; // Default to public client
 
-  // Only generate secret for confidential clients
-  const isPublicClient = tokenEndpointAuthMethod === 'none';
-  const clientSecretPlain = isPublicClient ? '' : generateClientSecret();
-  const clientSecretHash = isPublicClient ? '' : hashClientSecret(clientSecretPlain);
+  // Always enforce public client - PKCE provides sufficient security
+  const tokenEndpointAuthMethod: TokenEndpointAuthMethod = 'none';
 
   const client: OAuthClient = {
     clientId,
-    clientSecret: clientSecretHash,
+    clientSecret: '',
     clientName: request.client_name,
     redirectUris: request.redirect_uris,
     grantTypes,
@@ -165,19 +230,17 @@ export async function registerClient(request: ClientRegistrationRequest): Promis
 
   await store.set(clientId, client);
 
-  logger.info({ clientId, clientName: client.clientName, isPublicClient }, 'Registered new OAuth client');
+  logger.info({ clientId, clientName: client.clientName }, 'Registered new public OAuth client');
 
-  // Build response - only include secret for confidential clients
   const response: ClientRegistrationResponse = {
     client_id: clientId,
-    client_secret: clientSecretPlain,
     client_name: client.clientName,
     redirect_uris: client.redirectUris,
     grant_types: grantTypes,
     response_types: responseTypes,
     token_endpoint_auth_method: tokenEndpointAuthMethod,
     client_id_issued_at: Math.floor(client.createdAt / 1000),
-    client_secret_expires_at: isPublicClient ? 0 : 0, // 0 = never expires
+    client_secret_expires_at: 0,
   };
 
   return response;

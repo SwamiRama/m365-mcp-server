@@ -54,7 +54,7 @@ oauthRouter.get('/.well-known/oauth-authorization-server', (_req: Request, res: 
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
-    token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
+    token_endpoint_auth_methods_supported: ['none'],
     code_challenge_methods_supported: ['S256'],
     scopes_supported: ['openid', 'offline_access', 'mail.read', 'files.read'],
     service_documentation: 'https://github.com/anthropic/m365-mcp-server',
@@ -75,10 +75,10 @@ oauthRouter.get('/.well-known/jwks.json', (_req: Request, res: Response) => {
 // Dynamic Client Registration (RFC 7591)
 // =============================================================================
 
-// Strict rate limit for client registration: 5 per hour per IP
+// Rate limit for client registration: 20 per hour per IP (relaxed for idempotent DCR)
 const dcrRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -568,6 +568,10 @@ async function handleAuthorizationCodeGrant(
 
   // Validate client ID matches
   if (authCode.clientId !== clientId) {
+    req.log.warn(
+      { event: 'oauth.client_id_mismatch', expected: authCode.clientId, received: clientId, grant: 'authorization_code' },
+      'Client ID mismatch in authorization_code grant'
+    );
     sendTokenError(res, 'invalid_grant', 'Client ID mismatch');
     return;
   }
@@ -637,6 +641,10 @@ async function handleRefreshTokenGrant(
 
   // Validate client ID matches
   if (tokenRecord.clientId !== clientId) {
+    req.log.warn(
+      { event: 'oauth.client_id_mismatch', expected: tokenRecord.clientId, received: clientId, grant: 'refresh_token' },
+      'Client ID mismatch in refresh_token grant'
+    );
     sendTokenError(res, 'invalid_grant', 'Client ID mismatch');
     return;
   }

@@ -35,7 +35,7 @@ export interface ClientRegistrationRequest {
  */
 export interface ClientRegistrationResponse {
   client_id: string;
-  client_secret: string;
+  client_secret?: string;
   client_name: string;
   redirect_uris: string[];
   grant_types: GrantType[];
