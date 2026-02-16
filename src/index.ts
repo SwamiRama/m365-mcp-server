@@ -6,7 +6,8 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
-import { config } from './utils/config.js';
+import { config, GRAPH_SCOPES } from './utils/config.js';
+import { hasRequiredGraphScopes } from './utils/scope-check.js';
 import { logger, createRequestLogger } from './utils/logger.js';
 import { oauthClient } from './auth/oauth.js';
 import { sessionManager, type UserSession, type TokenSet } from './auth/session.js';
@@ -601,6 +602,19 @@ async function handleToolsCall(
 
     // Keep MSAL cache alive even when tokens don't need refresh
     touchMsalCache(req.session.id).catch(() => {});
+
+    // Check if granted scopes cover all required Graph scopes
+    if (!hasRequiredGraphScopes(currentTokens.scope)) {
+      req.log.warn(
+        { granted: currentTokens.scope, required: GRAPH_SCOPES },
+        'Session missing required Graph scopes - invalidating for re-auth'
+      );
+      await sessionManager.deleteSession(req.session.id);
+      throw new Error(
+        'Your session is missing required permissions (new scopes were added). ' +
+        'Please re-authenticate to grant the updated permissions.'
+      );
+    }
 
     // Create Graph client and tool executor
     // Pass user context so tools can include the user's identity in responses,

@@ -26,6 +26,7 @@ Open WebUI (OAuth Client) → MCP Server (Auth + Resource Server) → Azure AD (
 - Graph API `/sites` Endpoint benötigt `?search=*` Parameter um Sites zu listen
 - OAuth Token Endpoint benötigt `express.urlencoded()` Middleware
 - Hinter Reverse Proxy: `app.set('trust proxy', true)` erforderlich
+- Alle 401-Responses MÜSSEN `WWW-Authenticate: Bearer resource_metadata="..."` Header setzen, damit MCP-Clients (Open WebUI) den OAuth-Server discovern und Re-Auth auslösen können
 
 ## Test-Scripts
 - `scripts/test-local-oauth.sh` - Voller OAuth Flow Test

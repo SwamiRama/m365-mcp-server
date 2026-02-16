@@ -6,6 +6,15 @@ import { Request, Response, NextFunction } from 'express';
 import { verifyJwt } from './jwt.js';
 import { sessionManager } from '../auth/session.js';
 import type { AccessTokenPayload } from './types.js';
+import { config } from '../utils/config.js';
+
+/**
+ * Build WWW-Authenticate header value pointing to our OAuth metadata.
+ * Required by RFC 6750 / MCP spec so clients can discover the authorization server.
+ */
+function wwwAuthenticateHeader(): string {
+  return `Bearer resource_metadata="${config.baseUrl}/.well-known/oauth-authorization-server"`;
+}
 
 /**
  * Extended request with OAuth info
@@ -62,6 +71,7 @@ export async function bearerAuthMiddleware(
   const payload = verifyJwt(token);
 
   if (!payload) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
     res.status(401).json({
       error: 'invalid_token',
       error_description: 'Bearer token is invalid or expired',
@@ -77,6 +87,7 @@ export async function bearerAuthMiddleware(
   const session = await sessionManager.getSession(payload.sub);
 
   if (!session) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
     res.status(401).json({
       error: 'invalid_token',
       error_description: 'Session associated with token no longer valid',
@@ -86,6 +97,7 @@ export async function bearerAuthMiddleware(
 
   // Verify session has tokens (is authenticated with Azure AD)
   if (!session.tokens) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
     res.status(401).json({
       error: 'invalid_token',
       error_description: 'Session not authenticated',
@@ -119,6 +131,7 @@ export async function requireBearerAuth(
   const token = extractBearerToken(req);
 
   if (!token) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
     res.status(401).json({
       error: 'invalid_request',
       error_description: 'Bearer token required',
@@ -142,6 +155,7 @@ export function requireAuth(
   next: NextFunction
 ): void {
   if (!req.session || !req.session.tokens) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
     res.status(401).json({
       error: 'unauthorized',
       error_description: 'Authentication required',
