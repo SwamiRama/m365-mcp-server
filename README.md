@@ -121,8 +121,9 @@ docker-compose --profile with-mcpo up -d
 | Tool | Description |
 |------|-------------|
 | `mail_list_messages` | List messages with optional filters (supports shared mailboxes) |
-| `mail_get_message` | Get full message details (supports shared mailboxes) |
-| `mail_list_folders` | List mail folders (supports shared mailboxes) |
+| `mail_get_message` | Get full message details with body (HTML→text), CC/BCC, and attachment metadata |
+| `mail_list_folders` | List mail folders or subfolders (supports shared mailboxes) |
+| `mail_get_attachment` | Read and parse email attachments (PDF, Word, Excel, PowerPoint, CSV, HTML→text). Max 10MB |
 
 All email tools accept an optional `mailbox` parameter (email address or user ID) to access shared mailboxes. Omit to use your personal mailbox. Requires `Mail.Read.Shared` permission with admin consent.
 

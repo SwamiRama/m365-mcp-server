@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { GraphClient, type GraphMessage, type GraphMailFolder } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
+import { stripHtmlTags, isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
+import { isTextMimeType, formatFileSize } from '../utils/content-fetcher.js';
 
 /**
  * User context from the authenticated session.
@@ -58,18 +60,27 @@ export const getMessageInputSchema = z.object({
   include_body: z
     .boolean()
     .optional()
-    .default(false)
-    .describe('Whether to include the full message body (HTML/text)'),
+    .default(true)
+    .describe('Include the full message body (default: true). HTML is auto-converted to plain text. Set to false for metadata only.'),
   mailbox: mailboxSchema.optional(),
 });
 
 export const listFoldersInputSchema = z.object({
+  parent_folder_id: z.string().min(1).optional()
+    .describe('Folder ID or well-known name (inbox, sent, drafts, deleted, junk, archive) to list subfolders of. Omit to list top-level folders.'),
+  mailbox: mailboxSchema.optional(),
+});
+
+export const getAttachmentInputSchema = z.object({
+  message_id: z.string().min(1).describe('The message ID containing the attachment'),
+  attachment_id: z.string().min(1).describe('The attachment ID from mail_get_message response'),
   mailbox: mailboxSchema.optional(),
 });
 
 export type ListMessagesInput = z.infer<typeof listMessagesInputSchema>;
 export type GetMessageInput = z.infer<typeof getMessageInputSchema>;
 export type ListFoldersInput = z.infer<typeof listFoldersInputSchema>;
+export type GetAttachmentInput = z.infer<typeof getAttachmentInputSchema>;
 
 // Well-known folder mappings
 const WELL_KNOWN_FOLDERS: Record<string, string> = {
@@ -89,7 +100,7 @@ function formatMessage(message: GraphMessage, includeBody: boolean = false): obj
   const formatted: Record<string, unknown> = {
     id: message.id,
     subject: message.subject,
-    preview: message.bodyPreview?.substring(0, 200), // Limit preview length
+    preview: message.bodyPreview?.substring(0, 200),
     from: message.from?.emailAddress?.address,
     fromName: message.from?.emailAddress?.name,
     to: message.toRecipients?.map((r) => r.emailAddress?.address).filter(Boolean),
@@ -101,11 +112,36 @@ function formatMessage(message: GraphMessage, includeBody: boolean = false): obj
     webLink: message.webLink,
   };
 
+  // CC/BCC — only in getMessage, omitted when empty
+  const cc = message.ccRecipients?.map((r) => r.emailAddress?.address).filter(Boolean);
+  if (cc && cc.length > 0) formatted['cc'] = cc;
+  const bcc = message.bccRecipients?.map((r) => r.emailAddress?.address).filter(Boolean);
+  if (bcc && bcc.length > 0) formatted['bcc'] = bcc;
+
   if (includeBody && message.body) {
-    formatted['body'] = {
-      contentType: message.body.contentType,
-      content: message.body.content,
-    };
+    const content = message.body.content;
+    if (message.body.contentType?.toLowerCase() === 'html') {
+      formatted['body'] = { text: stripHtmlTags(content), html: content };
+    } else {
+      formatted['body'] = { text: content };
+    }
+  }
+
+  // Attachment metadata from $expand
+  if (message.attachments && message.attachments.length > 0) {
+    const regular = message.attachments.filter((a) => !a.isInline);
+    const inlineCount = message.attachments.length - regular.length;
+    if (regular.length > 0) {
+      formatted['attachments'] = regular.map((a) => ({
+        id: a.id,
+        name: a.name,
+        contentType: a.contentType,
+        size: a.size,
+      }));
+    }
+    if (inlineCount > 0) {
+      formatted['inlineAttachmentCount'] = inlineCount;
+    }
   }
 
   return formatted;
@@ -115,6 +151,7 @@ function formatFolder(folder: GraphMailFolder): object {
   return {
     id: folder.id,
     name: folder.displayName,
+    parentFolderId: folder.parentFolderId,
     unreadCount: folder.unreadItemCount,
     totalCount: folder.totalItemCount,
     childFolderCount: folder.childFolderCount,
@@ -231,18 +268,116 @@ export class MailTools {
   }
 
   /**
-   * List mail folders
+   * List mail folders (top-level or children of a specific folder)
    */
   async listFolders(input: ListFoldersInput): Promise<object> {
     const validated = listFoldersInputSchema.parse(input);
-    logger.debug({ mailbox: validated.mailbox }, 'Listing mail folders');
+    logger.debug({ mailbox: validated.mailbox, parentFolderId: validated.parent_folder_id }, 'Listing mail folders');
 
-    const folders = await this.graphClient.listMailFolders(validated.mailbox);
+    let folders: GraphMailFolder[];
+    if (validated.parent_folder_id) {
+      // Resolve well-known folder names
+      const lower = validated.parent_folder_id.toLowerCase();
+      const resolvedId = WELL_KNOWN_FOLDERS[lower] ?? validated.parent_folder_id;
+      folders = await this.graphClient.listChildFolders(resolvedId, validated.mailbox);
+    } else {
+      folders = await this.graphClient.listMailFolders(validated.mailbox);
+    }
 
     return {
       folders: folders.map(formatFolder),
       count: folders.length,
     };
+  }
+  /**
+   * Get and parse an email attachment
+   */
+  async getAttachment(input: GetAttachmentInput): Promise<object> {
+    const validated = getAttachmentInputSchema.parse(input);
+
+    logger.debug(
+      { messageId: validated.message_id, attachmentId: validated.attachment_id },
+      'Getting attachment'
+    );
+
+    try {
+      const attachment = await this.graphClient.getAttachment(
+        validated.message_id,
+        validated.attachment_id,
+        validated.mailbox
+      );
+
+      const odataType = attachment['@odata.type'] ?? '';
+      const result: Record<string, unknown> = {
+        id: attachment.id,
+        name: attachment.name,
+        contentType: attachment.contentType,
+        size: attachment.size,
+      };
+
+      // Item attachment (embedded email/event)
+      if (odataType.includes('itemAttachment')) {
+        result['type'] = 'itemAttachment';
+        result['item'] = attachment.item;
+        result['content'] = null;
+        result['_note'] = 'Item attachments (embedded emails/events) cannot be read as files. The item metadata is shown above.';
+        return result;
+      }
+
+      // Reference attachment (link to OneDrive/SharePoint file)
+      if (odataType.includes('referenceAttachment')) {
+        result['type'] = 'referenceAttachment';
+        result['sourceUrl'] = attachment.sourceUrl;
+        result['content'] = null;
+        result['_note'] = 'This is a link to a file in OneDrive/SharePoint. Use sp_get_file or od_get_file to read the actual content.';
+        return result;
+      }
+
+      // File attachment
+      result['type'] = 'fileAttachment';
+
+      if (!attachment.contentBytes) {
+        throw new Error('Attachment content is empty — the file may have been deleted or is inaccessible.');
+      }
+
+      const buffer = Buffer.from(attachment.contentBytes, 'base64');
+      const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+      if (buffer.length > MAX_SIZE) {
+        throw new Error(`Attachment size (${formatFileSize(buffer.length)}) exceeds the 10 MB limit.`);
+      }
+
+      const mimeType = attachment.contentType ?? 'application/octet-stream';
+
+      if (isTextMimeType(mimeType)) {
+        result['content'] = buffer.toString('utf-8');
+        result['contentType'] = 'text';
+      } else if (isParsableMimeType(mimeType)) {
+        const parsed = await parseFileContent(buffer, mimeType, attachment.name ?? 'attachment');
+        result['content'] = parsed.text;
+        result['contentType'] = 'parsed_text';
+        result['parsedFormat'] = parsed.format;
+        result['truncated'] = parsed.truncated;
+      } else {
+        result['content'] = null;
+        result['contentType'] = 'binary';
+        result['_note'] = `Binary file (${mimeType}) cannot be displayed as text. The metadata is shown above.`;
+      }
+
+      return result;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === 'ErrorInvalidMailboxItemId') {
+        const hint = validated.mailbox
+          ? `The message/attachment ID does not belong to mailbox '${validated.mailbox}'. Retry without the mailbox parameter or with the correct mailbox.`
+          : `The message/attachment ID does not belong to your personal mailbox. It was likely from a shared mailbox — retry with the correct mailbox parameter.`;
+
+        const enrichedError = new Error(hint) as Error & { code?: string; statusCode?: number };
+        enrichedError.code = code;
+        enrichedError.statusCode = (err as { statusCode?: number }).statusCode;
+        throw enrichedError;
+      }
+      throw err;
+    }
   }
 }
 
@@ -291,7 +426,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_message',
     description:
-      'Get the full details of a specific email message by ID, including the full body if requested. IMPORTANT: The message_id MUST be an ID returned by a recent mail_list_messages call — do not reuse IDs from previous conversations. You MUST pass the mailbox parameter with the exact mailbox_context value from the mail_list_messages response.',
+      'Get full email details including body (HTML auto-converted to plain text), CC/BCC recipients, and attachment metadata. Body is included by default. IMPORTANT: The message_id MUST be from a recent mail_list_messages call. You MUST pass the mailbox parameter with the exact mailbox_context value from the mail_list_messages response. If attachments are listed, use mail_get_attachment to read their content.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -301,7 +436,7 @@ export const mailToolDefinitions = [
         },
         include_body: {
           type: 'boolean',
-          description: 'Whether to include the full message body (HTML/text). Default: false',
+          description: 'Include the full message body (default: true). HTML is auto-converted to plain text.',
         },
         mailbox: {
           type: 'string',
@@ -314,15 +449,42 @@ export const mailToolDefinitions = [
   {
     name: 'mail_list_folders',
     description:
-      'List all mail folders in a Microsoft 365 mailbox with unread/total message counts. Supports shared mailboxes via the mailbox parameter.',
+      'List mail folders in a Microsoft 365 mailbox with unread/total message counts. Supports browsing subfolders via parent_folder_id. Supports shared mailboxes via the mailbox parameter.',
     inputSchema: {
       type: 'object' as const,
       properties: {
+        parent_folder_id: {
+          type: 'string',
+          description: 'Folder ID or well-known name (inbox, sent, drafts, deleted, junk, archive) to list subfolders of. Omit to list top-level folders.',
+        },
         mailbox: {
           type: 'string',
           description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
         },
       },
+    },
+  },
+  {
+    name: 'mail_get_attachment',
+    description:
+      'Read the content of an email attachment. Automatically parses PDF, Word, Excel, PowerPoint, CSV, and HTML into readable text. Text files are returned as-is. Binary files return metadata only (no base64 dumps). Max 10 MB. Use attachment IDs from the mail_get_message response.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        message_id: {
+          type: 'string',
+          description: 'The message ID containing the attachment.',
+        },
+        attachment_id: {
+          type: 'string',
+          description: 'The attachment ID from the mail_get_message response.',
+        },
+        mailbox: {
+          type: 'string',
+          description: 'The mailbox_context value from the original mail_list_messages response.',
+        },
+      },
+      required: ['message_id', 'attachment_id'],
     },
   },
 ];

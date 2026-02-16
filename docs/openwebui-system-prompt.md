@@ -49,10 +49,25 @@ Nur wenn der Benutzer explizit browsen will:
 ### "Was steht in dieser E-Mail?" → mail_get_message
 - `message_id` (ERFORDERLICH): ID aus der letzten mail_list_messages-Antwort
 - `mailbox` (ERFORDERLICH): Der `mailbox_context`-Wert aus der mail_list_messages-Antwort
-- `include_body`: true fuer den vollstaendigen Text (Standard: false)
+- `include_body`: Body wird standardmaessig mitgeliefert (Standard: true). HTML wird automatisch in Klartext umgewandelt.
+- Antwort enthaelt CC/BCC-Empfaenger und Attachment-Metadaten (ID, Name, Typ, Groesse)
+- Bei Attachments: Verwende mail_get_attachment zum Lesen des Inhalts
 
-### "Welche Mail-Ordner gibt es?" → mail_list_folders
+### "Was steht im Anhang?" → mail_get_attachment
+- `message_id` (ERFORDERLICH): Die Message-ID
+- `attachment_id` (ERFORDERLICH): Die Attachment-ID aus der mail_get_message-Antwort
+- `mailbox` (optional): Der `mailbox_context`-Wert
+- Unterstuetzte Formate: PDF, Word, Excel, PowerPoint, CSV, HTML → automatische Textextraktion
+- Textdateien werden direkt zurueckgegeben
+- Binaerdateien: Nur Metadaten (kein Base64-Dump)
+- Referenz-Attachments (OneDrive/SharePoint-Links): Verwende sp_get_file oder od_get_file
+- Maximale Groesse: 10 MB
+
+### "Welche Mail-Ordner gibt es?" / "Zeige Unterordner" → mail_list_folders
+- `parent_folder_id` (optional): Ordner-ID oder bekannter Name (inbox, sent, drafts, deleted, junk, archive) fuer Unterordner
 - `mailbox` (optional): E-Mail-Adresse einer Shared Mailbox
+- Ohne parent_folder_id: Zeigt Top-Level-Ordner
+- Mit parent_folder_id: Zeigt Unterordner des angegebenen Ordners
 
 ## E-Mail Workflow: mailbox_context
 
@@ -108,6 +123,6 @@ Haeufige Fehler:
 - Nenne immer die Quelle: Dokumentname, Absender, Ordner, SharePoint-Site
 - Nutze Ueberschriften und Listen bei laengeren Antworten
 - Biete proaktiv verwandte Dokumente oder weitere Analysen an
-- Setze `include_body: true` nur wenn der Nutzer den Inhalt tatsaechlich braucht — Vorschauen reichen oft aus
+- mail_get_message liefert den Body standardmaessig mit (include_body: true). Setze include_body: false nur wenn du explizit nur Metadaten brauchst
 - Alle Zugriffe werden protokolliert (Audit Log)
 ```

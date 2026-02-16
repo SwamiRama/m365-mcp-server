@@ -20,7 +20,7 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
-import { isParsableMimeType, parseFileContent } from '../../src/utils/file-parser.js';
+import { isParsableMimeType, parseFileContent, stripHtmlTags } from '../../src/utils/file-parser.js';
 
 describe('file-parser', () => {
   describe('isParsableMimeType', () => {
@@ -144,6 +144,36 @@ describe('file-parser', () => {
       const result = await parseFileContent(buffer, 'text/html', 'entities.html');
 
       expect(result.text).toContain('5 > 3 & 2 < 4');
+    });
+  });
+
+  describe('stripHtmlTags (exported)', () => {
+    it('should strip basic HTML tags', () => {
+      expect(stripHtmlTags('<p>Hello <b>world</b></p>')).toContain('Hello world');
+    });
+
+    it('should remove script and style tags with content', () => {
+      const html = '<style>.red{color:red}</style><script>alert(1)</script><p>Content</p>';
+      const result = stripHtmlTags(html);
+      expect(result).toContain('Content');
+      expect(result).not.toContain('alert');
+      expect(result).not.toContain('.red');
+    });
+
+    it('should decode HTML entities', () => {
+      expect(stripHtmlTags('5 &gt; 3 &amp; 2 &lt; 4')).toBe('5 > 3 & 2 < 4');
+    });
+
+    it('should convert br tags to newlines', () => {
+      expect(stripHtmlTags('line1<br>line2<br/>line3')).toBe('line1\nline2\nline3');
+    });
+
+    it('should handle empty input', () => {
+      expect(stripHtmlTags('')).toBe('');
+    });
+
+    it('should decode numeric HTML entities', () => {
+      expect(stripHtmlTags('&#65;&#66;&#67;')).toBe('ABC');
     });
   });
 });

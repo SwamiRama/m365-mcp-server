@@ -31,12 +31,40 @@ export interface GraphMessage {
       address?: string;
     };
   }>;
+  ccRecipients?: Array<{
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  }>;
+  bccRecipients?: Array<{
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  }>;
   receivedDateTime?: string;
   sentDateTime?: string;
   hasAttachments?: boolean;
   isRead?: boolean;
   importance?: string;
   webLink?: string;
+  attachments?: GraphAttachment[];
+}
+
+export interface GraphAttachment {
+  id: string;
+  '@odata.type'?: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+  isInline?: boolean;
+  contentBytes?: string;
+  sourceUrl?: string;
+  item?: {
+    subject?: string;
+    '@odata.type'?: string;
+  };
 }
 
 export interface GraphMailFolder {
@@ -310,6 +338,20 @@ export class GraphClient {
     return result.value ?? [];
   }
 
+  async listChildFolders(parentFolderId: string, userId?: string): Promise<GraphMailFolder[]> {
+    const base = userId ? `/users/${userId}` : '/me';
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api(`${base}/mailFolders/${parentFolderId}/childFolders`)
+          .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
+          .get(),
+      'listChildFolders'
+    );
+
+    return result.value ?? [];
+  }
+
   async listMessages(options: {
     folderId?: string;
     top?: number;
@@ -376,6 +418,8 @@ export class GraphClient {
       'bodyPreview',
       'from',
       'toRecipients',
+      'ccRecipients',
+      'bccRecipients',
       'receivedDateTime',
       'sentDateTime',
       'hasAttachments',
@@ -394,8 +438,20 @@ export class GraphClient {
         this.client
           .api(`${base}/messages/${messageId}`)
           .select(selectFields.join(','))
+          .expand('attachments($select=id,name,contentType,size,isInline)')
           .get(),
       'getMessage'
+    );
+  }
+
+  async getAttachment(messageId: string, attachmentId: string, userId?: string): Promise<GraphAttachment> {
+    const base = userId ? `/users/${userId}` : '/me';
+    return this.executeWithRetry(
+      () =>
+        this.client
+          .api(`${base}/messages/${messageId}/attachments/${attachmentId}`)
+          .get(),
+      'getAttachment'
     );
   }
 

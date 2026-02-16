@@ -1,5 +1,5 @@
 import { GraphClient } from '../graph/client.js';
-import { MailTools, mailToolDefinitions, type ListMessagesInput, type GetMessageInput, type UserContext } from './mail.js';
+import { MailTools, mailToolDefinitions, type ListMessagesInput, type GetMessageInput, type ListFoldersInput, type GetAttachmentInput, type UserContext } from './mail.js';
 import { SharePointTools, sharePointToolDefinitions, type ListSitesInput, type ListDrivesInput, type ListChildrenInput, type GetFileInput, type SearchFilesInput, type SearchAndReadInput } from './sharepoint.js';
 import { CalendarTools, calendarToolDefinitions, type ListEventsInput, type GetEventInput } from './calendar.js';
 import { OneDriveTools, oneDriveToolDefinitions, type ListFilesInput, type OdGetFileInput, type SearchInput, type RecentInput, type SharedWithMeInput } from './onedrive.js';
@@ -41,7 +41,9 @@ export class ToolExecutor {
       case 'mail_get_message':
         return this.mailTools.getMessage(args as GetMessageInput);
       case 'mail_list_folders':
-        return this.mailTools.listFolders({});
+        return this.mailTools.listFolders(args as ListFoldersInput);
+      case 'mail_get_attachment':
+        return this.mailTools.getAttachment(args as GetAttachmentInput);
 
       // SharePoint/Files tools
       case 'sp_search_read':

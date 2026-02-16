@@ -390,7 +390,7 @@ function extractZipEntries(
 /**
  * Strip HTML tags and return plain text.
  */
-function stripHtmlTags(html: string): string {
+export function stripHtmlTags(html: string): string {
   return html
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
