@@ -135,6 +135,12 @@ export interface GraphDrive {
       displayName?: string;
     };
   };
+  quota?: {
+    total?: number;
+    used?: number;
+    remaining?: number;
+    state?: string;
+  };
 }
 
 export interface GraphDriveItem {
@@ -434,10 +440,53 @@ export class GraphClient {
       () =>
         this.client
           .api('/me/drive')
-          .select('id,name,driveType,webUrl,owner')
+          .select('id,name,driveType,webUrl,owner,quota')
           .get(),
       'getMyDrive'
     );
+  }
+
+  async getMyDriveRecent(top: number = 25): Promise<GraphDriveItem[]> {
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api('/me/drive/recent')
+          .top(top)
+          .get(),
+      'getMyDriveRecent'
+    );
+
+    return result.value ?? [];
+  }
+
+  async getMyDriveSharedWithMe(top: number = 25): Promise<GraphDriveItem[]> {
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api('/me/drive/sharedWithMe')
+          .top(top)
+          .get(),
+      'getMyDriveSharedWithMe'
+    );
+
+    return result.value ?? [];
+  }
+
+  async searchMyDrive(query: string, top: number = 25): Promise<GraphDriveItem[]> {
+    const escaped = query.replace(/'/g, "''");
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api(`/me/drive/search(q='${escaped}')`)
+          .top(top)
+          .select(
+            'id,name,webUrl,size,createdDateTime,lastModifiedDateTime,file,folder,parentReference'
+          )
+          .get(),
+      'searchMyDrive'
+    );
+
+    return result.value ?? [];
   }
 
   async searchDriveItems(options: {

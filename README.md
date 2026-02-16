@@ -135,6 +135,17 @@ All email tools accept an optional `mailbox` parameter (email address or user ID
 | `sp_list_children` | List folder contents |
 | `sp_get_file` | Get file content with automatic document parsing (PDF, Word, Excel, PowerPoint → text). Max 10MB |
 
+### OneDrive Tools
+
+| Tool | Description |
+|------|-------------|
+| `od_my_drive` | Get personal OneDrive info including drive ID and storage quota |
+| `od_list_files` | List files and folders in personal OneDrive (root or subfolder) |
+| `od_get_file` | Get file content by item_id with automatic document parsing (PDF, Word, Excel, PowerPoint). Max 10MB |
+| `od_search` | Search for files in personal OneDrive only |
+| `od_recent` | List recently accessed files |
+| `od_shared_with_me` | List files shared with you by others |
+
 ### Calendar Tools
 
 | Tool | Description |

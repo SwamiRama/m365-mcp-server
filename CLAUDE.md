@@ -13,6 +13,7 @@ Open WebUI (OAuth Client) → MCP Server (Auth + Resource Server) → Azure AD (
 - `src/graph/client.ts` - Microsoft Graph API Client
 - `src/tools/mail.ts` - Mail Tools (inkl. Shared Mailbox Support)
 - `src/tools/sharepoint.ts` - SharePoint/OneDrive Tools
+- `src/tools/onedrive.ts` - Dedicated OneDrive Tools (personal drive)
 - `src/tools/calendar.ts` - Calendar Tools (read-only)
 - `src/utils/config.ts` - Konfiguration und Graph Scopes
 

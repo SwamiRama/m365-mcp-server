@@ -1,10 +1,7 @@
 import { z } from 'zod';
 import { GraphClient, type GraphCalendar, type GraphCalendarEvent } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
-
-// Safe pattern for Graph API resource IDs
-const graphIdPattern = /^[a-zA-Z0-9\-._,!:]+$/;
-const graphIdSchema = z.string().min(1).regex(graphIdPattern, 'Invalid resource ID format');
+import { graphIdSchema } from '../utils/graph-id.js';
 
 // Input schemas
 export const listCalendarsInputSchema = z.object({});

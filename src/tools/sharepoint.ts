@@ -7,11 +7,8 @@ import {
   type SearchHit,
 } from '../graph/client.js';
 import { logger } from '../utils/logger.js';
-import { isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
-
-// Safe pattern for Graph API resource IDs (alphanumeric, hyphens, dots, underscores, commas, colons, exclamation marks)
-const graphIdPattern = /^[a-zA-Z0-9\-._,!:]+$/;
-const graphIdSchema = z.string().min(1).regex(graphIdPattern, 'Invalid resource ID format');
+import { graphIdPattern, graphIdSchema } from '../utils/graph-id.js';
+import { formatFileSize, fetchAndParseContent } from '../utils/content-fetcher.js';
 
 // Input schemas for SharePoint/Files tools
 export const listSitesInputSchema = z.object({
@@ -110,29 +107,6 @@ export type SearchAndReadInput = z.infer<typeof searchAndReadInputSchema>;
 // Maximum file size for content retrieval (10MB)
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-// Text-based MIME types that can be safely returned as text
-const TEXT_MIME_TYPES = new Set([
-  'text/plain',
-  'text/html',
-  'text/css',
-  'text/javascript',
-  'text/csv',
-  'text/xml',
-  'text/markdown',
-  'application/json',
-  'application/xml',
-  'application/javascript',
-  'application/x-yaml',
-  'application/x-sh',
-]);
-
-function isTextMimeType(mimeType: string): boolean {
-  if (TEXT_MIME_TYPES.has(mimeType)) return true;
-  if (mimeType.startsWith('text/')) return true;
-  if (mimeType.endsWith('+json')) return true;
-  if (mimeType.endsWith('+xml')) return true;
-  return false;
-}
 
 // Output formatters
 function formatSite(site: GraphSite): object {
@@ -175,12 +149,6 @@ function formatDriveItem(item: GraphDriveItem): object {
   return formatted;
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 // Tool implementations
 export class SharePointTools {
@@ -220,70 +188,6 @@ export class SharePointTools {
       site_id: validated.site_id,
       _note: 'Use the drive id values from this response with sp_list_children to browse files, or use sp_get_file to read a file.',
     };
-  }
-
-  /**
-   * Shared helper: fetch file content and parse it into the result object.
-   * Used by both getFile and searchAndRead to avoid code duplication.
-   */
-  private async fetchAndParseContent(
-    driveId: string,
-    itemId: string,
-    fileName: string,
-    result: Record<string, unknown>
-  ): Promise<void> {
-    try {
-      const contentResult = await this.graphClient.getFileContent(
-        driveId,
-        itemId,
-        MAX_FILE_SIZE
-      );
-
-      if (contentResult) {
-        const mimeType = contentResult.mimeType;
-
-        if (isTextMimeType(mimeType)) {
-          result['content'] = contentResult.content.toString('utf-8');
-          result['contentType'] = 'text';
-        } else if (isParsableMimeType(mimeType)) {
-          try {
-            const parsed = await parseFileContent(
-              contentResult.content,
-              mimeType,
-              fileName
-            );
-            result['content'] = parsed.text;
-            result['contentType'] = 'parsed_text';
-            result['parsedFormat'] = parsed.format;
-            result['truncated'] = parsed.truncated;
-          } catch (parseErr) {
-            const parseMessage =
-              parseErr instanceof Error ? parseErr.message : 'Unknown parsing error';
-            logger.warn(
-              { err: parseErr, mimeType, fileName },
-              'Document parsing failed, falling back to base64'
-            );
-            result['content'] = contentResult.content.toString('base64');
-            result['contentType'] = 'base64';
-            result['parseError'] = parseMessage;
-          }
-        } else {
-          result['content'] = contentResult.content.toString('base64');
-          result['contentType'] = 'base64';
-        }
-
-        result['contentMimeType'] = mimeType;
-        result['contentSize'] = contentResult.size;
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      logger.warn(
-        { err, driveId, itemId },
-        'Failed to fetch file content'
-      );
-      result['content'] = null;
-      result['contentError'] = errorMessage;
-    }
   }
 
   /**
@@ -478,7 +382,7 @@ export class SharePointTools {
       return result;
     }
 
-    await this.fetchAndParseContent(driveId, itemId, resource.name ?? 'unknown', result);
+    await fetchAndParseContent(this.graphClient, driveId, itemId, resource.name ?? 'unknown', MAX_FILE_SIZE, result);
 
     return result;
   }
@@ -570,10 +474,12 @@ export class SharePointTools {
       return result;
     }
 
-    await this.fetchAndParseContent(
+    await fetchAndParseContent(
+      this.graphClient,
       validated.drive_id,
       validated.item_id,
       item.name ?? 'unknown',
+      MAX_FILE_SIZE,
       result
     );
 
