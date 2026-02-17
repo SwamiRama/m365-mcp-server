@@ -313,6 +313,33 @@ export class GraphClient {
     throw lastError;
   }
 
+  // === Pagination Helper ===
+
+  /**
+   * Fetch all pages of a paginated Graph API response.
+   * Follows @odata.nextLink until all results are collected.
+   */
+  private async fetchAllPages<T>(
+    initialRequest: () => Promise<Record<string, unknown>>,
+    operationName: string
+  ): Promise<T[]> {
+    const firstPage = await this.executeWithRetry(initialRequest, operationName);
+    const items: T[] = (firstPage.value as T[] | undefined) ?? [];
+    let nextLink = firstPage['@odata.nextLink'] as string | undefined;
+
+    while (nextLink) {
+      const url = nextLink;
+      const page = await this.executeWithRetry(
+        () => this.client.api(url).get(),
+        operationName
+      );
+      items.push(...((page.value as T[] | undefined) ?? []));
+      nextLink = page['@odata.nextLink'] as string | undefined;
+    }
+
+    return items;
+  }
+
   // === User Operations ===
 
   async getMe(): Promise<GraphUser> {
@@ -326,30 +353,28 @@ export class GraphClient {
 
   async listMailFolders(userId?: string): Promise<GraphMailFolder[]> {
     const base = userId ? `/users/${userId}` : '/me';
-    const result = await this.executeWithRetry(
+    return this.fetchAllPages<GraphMailFolder>(
       () =>
         this.client
           .api(`${base}/mailFolders`)
+          .top(50)
           .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
           .get(),
       'listMailFolders'
     );
-
-    return result.value ?? [];
   }
 
   async listChildFolders(parentFolderId: string, userId?: string): Promise<GraphMailFolder[]> {
     const base = userId ? `/users/${userId}` : '/me';
-    const result = await this.executeWithRetry(
+    return this.fetchAllPages<GraphMailFolder>(
       () =>
         this.client
           .api(`${base}/mailFolders/${parentFolderId}/childFolders`)
+          .top(50)
           .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
           .get(),
       'listChildFolders'
     );
-
-    return result.value ?? [];
   }
 
   async listMessages(options: {
