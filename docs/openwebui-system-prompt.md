@@ -61,7 +61,7 @@ Nur wenn der Benutzer explizit browsen will:
 - Textdateien werden direkt zurueckgegeben
 - Binaerdateien: Nur Metadaten (kein Base64-Dump)
 - Referenz-Attachments (OneDrive/SharePoint-Links): Verwende sp_get_file oder od_get_file
-- Maximale Groesse: 10 MB
+- Maximale Groesse: 20 MB
 
 ### "Welche Mail-Ordner gibt es?" / "Zeige Unterordner" → mail_list_folders
 - `parent_folder_id` (optional): Ordner-ID oder bekannter Name (inbox, sent, drafts, deleted, junk, archive) fuer Unterordner
@@ -138,7 +138,7 @@ SharePoint/OneDrive (sp_search, sp_search_read):
 | CSV | .csv | Tabelleninhalt |
 | HTML | .html | Bereinigter Text |
 
-Andere Formate werden als Base64 zurueckgegeben. Maximale Dateigroesse: 10 MB.
+Andere Formate werden als Base64 zurueckgegeben. Maximale Dateigroesse: 20 MB.
 
 ## Fehlerbehandlung
 

@@ -341,9 +341,9 @@ export class MailTools {
       }
 
       const buffer = Buffer.from(attachment.contentBytes, 'base64');
-      const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+      const MAX_SIZE = 20 * 1024 * 1024; // 20MB
       if (buffer.length > MAX_SIZE) {
-        throw new Error(`Attachment size (${formatFileSize(buffer.length)}) exceeds the 10 MB limit.`);
+        throw new Error(`Attachment size (${formatFileSize(buffer.length)}) exceeds the 20 MB limit.`);
       }
 
       const mimeType = attachment.contentType ?? 'application/octet-stream';
@@ -467,7 +467,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_attachment',
     description:
-      'Read the content of an email attachment. Automatically parses PDF, Word, Excel, PowerPoint, CSV, and HTML into readable text. Text files are returned as-is. Binary files return metadata only (no base64 dumps). Max 10 MB. Use attachment IDs from the mail_get_message response.',
+      'Read the content of an email attachment. Automatically parses PDF, Word, Excel, PowerPoint, CSV, and HTML into readable text. Text files are returned as-is. Binary files return metadata only (no base64 dumps). Max 20 MB. Use attachment IDs from the mail_get_message response.',
     inputSchema: {
       type: 'object' as const,
       properties: {

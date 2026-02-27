@@ -4,8 +4,8 @@ import { logger } from '../utils/logger.js';
 import { graphIdPattern, graphIdSchema } from '../utils/graph-id.js';
 import { formatFileSize, fetchAndParseContent } from '../utils/content-fetcher.js';
 
-// Maximum file size for content retrieval (10MB)
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+// Maximum file size for content retrieval (20MB)
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 // Input schemas
 export const myDriveInputSchema = z.object({});
@@ -324,7 +324,7 @@ export const oneDriveToolDefinitions = [
   {
     name: 'od_get_file',
     description:
-      'Get a file from your personal OneDrive by item_id. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are auto-parsed to readable text. Max 10MB. ' +
+      'Get a file from your personal OneDrive by item_id. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are auto-parsed to readable text. Max 20MB. ' +
       'The item_id MUST come from a recent od_list_files, od_search, or od_recent response.',
     inputSchema: {
       type: 'object' as const,

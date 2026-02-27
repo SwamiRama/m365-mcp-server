@@ -763,7 +763,7 @@ export class GraphClient {
   async getFileContent(
     driveId: string,
     itemId: string,
-    maxSize: number = 10 * 1024 * 1024 // 10MB default
+    maxSize: number = 20 * 1024 * 1024 // 20MB default
   ): Promise<{ content: Buffer; mimeType: string; size: number } | null> {
     // First, get the item metadata to check size
     const item = await this.getDriveItem(driveId, itemId);

@@ -123,7 +123,7 @@ docker-compose --profile with-mcpo up -d
 | `mail_list_messages` | List messages with optional filters (supports shared mailboxes) |
 | `mail_get_message` | Get full message details with body (HTML→text), CC/BCC, and attachment metadata |
 | `mail_list_folders` | List mail folders or subfolders (supports shared mailboxes) |
-| `mail_get_attachment` | Read and parse email attachments (PDF, Word, Excel, PowerPoint, CSV, HTML→text). Max 10MB |
+| `mail_get_attachment` | Read and parse email attachments (PDF, Word, Excel, PowerPoint, CSV, HTML→text). Max 20MB |
 
 All email tools accept an optional `mailbox` parameter (email address or user ID) to access shared mailboxes. Omit to use your personal mailbox. Requires `Mail.Read.Shared` permission with admin consent.
 
@@ -134,7 +134,7 @@ All email tools accept an optional `mailbox` parameter (email address or user ID
 | `sp_list_sites` | Search and list SharePoint sites |
 | `sp_list_drives` | List drives (OneDrive/document libraries) |
 | `sp_list_children` | List folder contents |
-| `sp_get_file` | Get file content with automatic document parsing (PDF, Word, Excel, PowerPoint → text). Max 10MB |
+| `sp_get_file` | Get file content with automatic document parsing (PDF, Word, Excel, PowerPoint → text). Max 20MB |
 
 ### OneDrive Tools
 
@@ -142,7 +142,7 @@ All email tools accept an optional `mailbox` parameter (email address or user ID
 |------|-------------|
 | `od_my_drive` | Get personal OneDrive info including drive ID and storage quota |
 | `od_list_files` | List files and folders in personal OneDrive (root or subfolder) |
-| `od_get_file` | Get file content by item_id with automatic document parsing (PDF, Word, Excel, PowerPoint). Max 10MB |
+| `od_get_file` | Get file content by item_id with automatic document parsing (PDF, Word, Excel, PowerPoint). Max 20MB |
 | `od_search` | Search for files in personal OneDrive only |
 | `od_recent` | List recently accessed files |
 | `od_shared_with_me` | List files shared with you by others |
@@ -294,7 +294,7 @@ Other binary formats are returned as base64. Parsed text output is limited to 50
 
 ## Known Limitations
 
-- Maximum file download size: 10MB
+- Maximum file download size: 20MB
 - Parsed text output capped at 500KB (configurable via `FILE_PARSE_MAX_OUTPUT_KB`)
 - SharePoint site listing requires search query (Graph API limitation)
 - Refresh tokens limited to 24 hours for SPA scenarios

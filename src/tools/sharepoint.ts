@@ -104,8 +104,8 @@ export type GetFileInput = z.infer<typeof getFileInputSchema>;
 export type SearchFilesInput = z.infer<typeof searchFilesInputSchema>;
 export type SearchAndReadInput = z.infer<typeof searchAndReadInputSchema>;
 
-// Maximum file size for content retrieval (10MB)
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+// Maximum file size for content retrieval (20MB)
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 
 // Output formatters
@@ -495,7 +495,7 @@ export const sharePointToolDefinitions = [
       'Search for a file and immediately return its content in one step. This is the EASIEST and MOST RELIABLE way to find and read a document. ' +
       'Combines search + file retrieval, so there are no ID mismatches. ' +
       'Use this FIRST when the user asks "What does document X say?" or "Show me the content of Y" or any question that requires reading file content. ' +
-      'PDF, Word, Excel, PowerPoint are auto-parsed to text. Max 10MB. ' +
+      'PDF, Word, Excel, PowerPoint are auto-parsed to text. Max 20MB. ' +
       'Examples: query="Ersthelfer Berlin", query="budget report" site_name="Finance Team".',
     inputSchema: {
       type: 'object' as const,
@@ -601,7 +601,7 @@ export const sharePointToolDefinitions = [
   {
     name: 'sp_get_file',
     description:
-      'Get file content by drive_id + item_id. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are auto-parsed to readable text. Max 10MB. ' +
+      'Get file content by drive_id + item_id. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) are auto-parsed to readable text. Max 20MB. ' +
       'IMPORTANT: Use the EXACT drive_id and item_id from the MOST RECENT sp_search or sp_list_children response. Do NOT use IDs from earlier messages.',
     inputSchema: {
       type: 'object' as const,
