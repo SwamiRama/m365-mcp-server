@@ -370,9 +370,9 @@ describe('Mail Tools', () => {
       expect(result['_note']).toContain('Binary file');
     });
 
-    it('should throw for attachments exceeding 10MB', async () => {
-      // Create a large base64 string (>10MB decoded)
-      const largeBuffer = Buffer.alloc(11 * 1024 * 1024);
+    it('should throw for attachments exceeding 20MB', async () => {
+      // Create a large base64 string (>20MB decoded)
+      const largeBuffer = Buffer.alloc(21 * 1024 * 1024);
       const largeAttachment: GraphAttachment = {
         id: 'att-large',
         '@odata.type': '#microsoft.graph.fileAttachment',
@@ -386,7 +386,7 @@ describe('Mail Tools', () => {
 
       await expect(
         mailTools.getAttachment({ message_id: 'msg-1', attachment_id: 'att-large' })
-      ).rejects.toThrow(/exceeds the 10 MB limit/);
+      ).rejects.toThrow(/exceeds the 20 MB limit/);
     });
 
     it('should throw for attachment with missing contentBytes', async () => {

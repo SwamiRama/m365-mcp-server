@@ -216,7 +216,7 @@ describe('SharePoint Tools', () => {
       }) as Record<string, unknown>;
 
       expect(mockGraphClient.getDriveItem).toHaveBeenCalledWith('drive-abc-123', 'item-1');
-      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith('drive-abc-123', 'item-1', 10 * 1024 * 1024);
+      expect(mockGraphClient.getFileContent).toHaveBeenCalledWith('drive-abc-123', 'item-1', 20 * 1024 * 1024);
       expect(result['name']).toBe('Report.docx');
       expect(result['content']).toBe('file content here');
       expect(result['contentType']).toBe('text');
@@ -245,7 +245,7 @@ describe('SharePoint Tools', () => {
     it('should handle files that are too large', async () => {
       (mockGraphClient.getDriveItem as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...mockDriveItems[0],
-        size: 20 * 1024 * 1024, // 20MB
+        size: 30 * 1024 * 1024, // 30MB
       });
 
       const result = await spTools.getFile({
@@ -420,7 +420,7 @@ describe('SharePoint Tools', () => {
       expect(mockGraphClient.getFileContent).toHaveBeenCalledWith(
         'drive-abc-123',    // from mockSearchHits[0].resource.parentReference.driveId
         'item-search-1',     // from mockSearchHits[0].resource.id
-        10 * 1024 * 1024
+        20 * 1024 * 1024
       );
     });
 
@@ -455,7 +455,7 @@ describe('SharePoint Tools', () => {
       expect(mockGraphClient.getFileContent).toHaveBeenCalledWith(
         'drive-abc-123',
         'item-search-2',
-        10 * 1024 * 1024
+        20 * 1024 * 1024
       );
     });
 
@@ -532,7 +532,7 @@ describe('SharePoint Tools', () => {
           resource: {
             id: 'big-item',
             name: 'BigFile.zip',
-            size: 20 * 1024 * 1024,
+            size: 30 * 1024 * 1024,
             file: { mimeType: 'application/zip' },
             parentReference: { driveId: 'drive-abc-123' },
           },

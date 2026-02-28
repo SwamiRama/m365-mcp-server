@@ -161,7 +161,7 @@ describe('OneDrive Tools', () => {
       expect(mockGraphClient.getFileContent).toHaveBeenCalledWith(
         'b!drive-personal-123',
         'od-item-1',
-        10 * 1024 * 1024
+        20 * 1024 * 1024
       );
       expect(result['name']).toBe('Notes.txt');
       expect(result['content']).toBe('hello world');
@@ -191,7 +191,7 @@ describe('OneDrive Tools', () => {
     it('should handle files that are too large', async () => {
       (mockGraphClient.getDriveItem as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...mockDriveItems[0],
-        size: 20 * 1024 * 1024,
+        size: 30 * 1024 * 1024,
       });
 
       const result = await odTools.getFile({ item_id: 'od-item-1' }) as Record<string, unknown>;
