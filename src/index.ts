@@ -264,6 +264,9 @@ app.get('/auth/callback', async (req: Request, res: Response): Promise<void> => 
     }, 'User login successful');
 
     // Return success page or redirect
+    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const safeName = escapeHtml(tokenResult.userDisplayName ?? tokenResult.userEmail ?? 'User');
+
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -276,9 +279,8 @@ app.get('/auth/callback', async (req: Request, res: Response): Promise<void> => 
       </head>
       <body>
         <h1 class="success">Login Successful!</h1>
-        <p>You are now authenticated as: <strong>${tokenResult.userDisplayName ?? tokenResult.userEmail ?? 'User'}</strong></p>
+        <p>You are now authenticated as: <strong>${safeName}</strong></p>
         <p>You can close this window and return to your application.</p>
-        <p><small>Session ID: ${req.session.id}</small></p>
       </body>
       </html>
     `);

@@ -656,7 +656,20 @@ async function handleRefreshTokenGrant(
     return;
   }
 
-  // Use requested scope or original scope
+  // Validate requested scope is a subset of original grant (RFC 6749 Section 6)
+  if (typeof scope === 'string') {
+    const originalScopes = new Set(tokenRecord.scope.split(' '));
+    const invalidScopes = scope.split(' ').filter(s => !originalScopes.has(s));
+    if (invalidScopes.length > 0) {
+      req.log.warn(
+        { event: 'oauth.scope_escalation_attempt', requested: scope, original: tokenRecord.scope, invalidScopes },
+        'Refresh token scope escalation blocked'
+      );
+      sendTokenError(res, 'invalid_scope', 'Requested scope exceeds original grant');
+      return;
+    }
+  }
+
   const tokenScope = (typeof scope === 'string' ? scope : tokenRecord.scope);
 
   // Generate new access token
