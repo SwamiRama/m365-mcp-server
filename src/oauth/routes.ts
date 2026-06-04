@@ -470,7 +470,7 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
   }
 
   if (!clientId) {
-    sendTokenError(res, 'invalid_client', 'client_id is required');
+    sendTokenError(req, res, 'invalid_client', 'client_id is required');
     return;
   }
 
@@ -478,7 +478,7 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
   const client = await getClient(clientId);
 
   if (!client) {
-    sendTokenError(res, 'invalid_client', 'Unknown client');
+    sendTokenError(req, res, 'invalid_client', 'Unknown client');
     return;
   }
 
@@ -490,12 +490,12 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
     // Confidential client with secret provided - verify it
     const authenticated = await authenticateClient(clientId, clientSecret);
     if (!authenticated) {
-      sendTokenError(res, 'invalid_client', 'Invalid client credentials');
+      sendTokenError(req, res, 'invalid_client', 'Invalid client credentials');
       return;
     }
   } else {
     // Confidential client but no secret provided
-    sendTokenError(res, 'invalid_client', 'Client authentication required');
+    sendTokenError(req, res, 'invalid_client', 'Client authentication required');
     return;
   }
 
@@ -509,7 +509,12 @@ oauthRouter.post('/token', async (req: Request, res: Response): Promise<void> =>
       break;
 
     default:
-      sendTokenError(res, 'unsupported_grant_type', `Grant type "${grant_type}" is not supported`);
+      sendTokenError(
+        req,
+        res,
+        'unsupported_grant_type',
+        `Grant type "${String(grant_type).slice(0, 50)}" is not supported`
+      );
   }
 });
 
@@ -545,24 +550,24 @@ async function handleAuthorizationCodeGrant(
 
   // Validate required parameters
   if (!code || typeof code !== 'string') {
-    sendTokenError(res, 'invalid_request', 'Authorization code is required');
+    sendTokenError(req, res, 'invalid_request', 'Authorization code is required');
     return;
   }
 
   if (!redirect_uri || typeof redirect_uri !== 'string') {
-    sendTokenError(res, 'invalid_request', 'redirect_uri is required');
+    sendTokenError(req, res, 'invalid_request', 'redirect_uri is required');
     return;
   }
 
   if (!code_verifier || typeof code_verifier !== 'string') {
-    sendTokenError(res, 'invalid_request', 'code_verifier is required (PKCE)');
+    sendTokenError(req, res, 'invalid_request', 'code_verifier is required (PKCE)');
     return;
   }
 
   // Consume authorization code
   const authCode = await consumeAuthorizationCode(code);
   if (!authCode) {
-    sendTokenError(res, 'invalid_grant', 'Authorization code is invalid or expired');
+    sendTokenError(req, res, 'invalid_grant', 'Authorization code is invalid or expired');
     return;
   }
 
@@ -572,19 +577,19 @@ async function handleAuthorizationCodeGrant(
       { event: 'oauth.client_id_mismatch', expected: authCode.clientId, received: clientId, grant: 'authorization_code' },
       'Client ID mismatch in authorization_code grant'
     );
-    sendTokenError(res, 'invalid_grant', 'Client ID mismatch');
+    sendTokenError(req, res, 'invalid_grant', 'Client ID mismatch');
     return;
   }
 
   // Validate redirect URI matches
   if (authCode.redirectUri !== redirect_uri) {
-    sendTokenError(res, 'invalid_grant', 'Redirect URI mismatch');
+    sendTokenError(req, res, 'invalid_grant', 'Redirect URI mismatch');
     return;
   }
 
   // Verify PKCE code verifier
   if (!verifyCodeChallenge(code_verifier, authCode.codeChallenge, authCode.codeChallengeMethod)) {
-    sendTokenError(res, 'invalid_grant', 'PKCE verification failed');
+    sendTokenError(req, res, 'invalid_grant', 'PKCE verification failed');
     return;
   }
 
@@ -628,14 +633,14 @@ async function handleRefreshTokenGrant(
   const { refresh_token, scope } = req.body;
 
   if (!refresh_token || typeof refresh_token !== 'string') {
-    sendTokenError(res, 'invalid_request', 'refresh_token is required');
+    sendTokenError(req, res, 'invalid_request', 'refresh_token is required');
     return;
   }
 
   // Validate refresh token
   const tokenRecord = await validateRefreshToken(refresh_token);
   if (!tokenRecord) {
-    sendTokenError(res, 'invalid_grant', 'Refresh token is invalid or expired');
+    sendTokenError(req, res, 'invalid_grant', 'Refresh token is invalid or expired');
     return;
   }
 
@@ -645,14 +650,14 @@ async function handleRefreshTokenGrant(
       { event: 'oauth.client_id_mismatch', expected: tokenRecord.clientId, received: clientId, grant: 'refresh_token' },
       'Client ID mismatch in refresh_token grant'
     );
-    sendTokenError(res, 'invalid_grant', 'Client ID mismatch');
+    sendTokenError(req, res, 'invalid_grant', 'Client ID mismatch');
     return;
   }
 
   // Check if session still exists
   const session = await sessionManager.getSession(tokenRecord.sessionId);
   if (!session) {
-    sendTokenError(res, 'invalid_grant', 'Session no longer valid');
+    sendTokenError(req, res, 'invalid_grant', 'Session no longer valid');
     return;
   }
 
@@ -665,7 +670,7 @@ async function handleRefreshTokenGrant(
         { event: 'oauth.scope_escalation_attempt', requested: scope, original: tokenRecord.scope, invalidScopes },
         'Refresh token scope escalation blocked'
       );
-      sendTokenError(res, 'invalid_scope', 'Requested scope exceeds original grant');
+      sendTokenError(req, res, 'invalid_scope', 'Requested scope exceeds original grant');
       return;
     }
   }
@@ -690,7 +695,7 @@ async function handleRefreshTokenGrant(
   });
 
   if (!newRefreshToken) {
-    sendTokenError(res, 'invalid_grant', 'Failed to rotate refresh token');
+    sendTokenError(req, res, 'invalid_grant', 'Failed to rotate refresh token');
     return;
   }
 
@@ -708,13 +713,18 @@ async function handleRefreshTokenGrant(
 }
 
 /**
- * Send token error response
+ * Send token error response (exported for tests)
  */
-function sendTokenError(
+export function sendTokenError(
+  req: Request,
   res: Response,
   error: TokenErrorResponse['error'],
   description: string
 ): void {
+  req.log.warn(
+    { event: 'oauth.token_error', error, error_description: description },
+    'Token grant failed'
+  );
   res.status(400).json({
     error,
     error_description: description,

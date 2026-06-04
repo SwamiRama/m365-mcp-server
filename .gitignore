@@ -52,3 +52,4 @@ credentials.json
 
 # SBOM artifacts
 sbom*.json
+tsconfig.tsbuildinfo

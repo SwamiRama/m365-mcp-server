@@ -14,6 +14,7 @@ const configSchema = z.object({
 
   // Session
   sessionSecret: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+  sessionTtlSecs: z.coerce.number().int().positive().default(86400), // 24 hours
 
   // Redis (optional)
   redisUrl: z.string().url().optional(),
@@ -37,6 +38,7 @@ const configSchema = z.object({
   oauthSigningKeyPublic: z.string().optional(), // PEM or file path, auto-generated if not set
   oauthAccessTokenLifetimeSecs: z.coerce.number().int().positive().default(900), // 15 minutes
   oauthRefreshTokenLifetimeSecs: z.coerce.number().int().positive().default(86400), // 24 hours
+  oauthRefreshTokenReuseGraceSecs: z.coerce.number().int().nonnegative().default(60), // rotation race tolerance
   oauthAuthCodeLifetimeSecs: z.coerce.number().int().positive().default(600), // 10 minutes
   oauthAllowDynamicRegistration: z
     .string()
@@ -49,6 +51,13 @@ const configSchema = z.object({
   oauthAllowedRedirectPatterns: z.string().optional(), // Comma-separated URL patterns
 })
   .superRefine((data, ctx) => {
+    if (data.sessionTtlSecs < data.oauthRefreshTokenLifetimeSecs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sessionTtlSecs'],
+        message: `SESSION_TTL_SECONDS (${data.sessionTtlSecs}) must be >= OAUTH_REFRESH_TOKEN_LIFETIME_SECS (${data.oauthRefreshTokenLifetimeSecs}) - refresh tokens outliving the session would fail with "Session no longer valid"`,
+      });
+    }
     if (data.nodeEnv === 'production') {
       if (!data.redisUrl) {
         ctx.addIssue({
@@ -92,6 +101,7 @@ function loadConfig(): Config {
     baseUrl: process.env['MCP_SERVER_BASE_URL'],
     nodeEnv: process.env['NODE_ENV'],
     sessionSecret: process.env['SESSION_SECRET'],
+    sessionTtlSecs: process.env['SESSION_TTL_SECONDS'],
     redisUrl: process.env['REDIS_URL'],
     rateLimitWindowMs: process.env['RATE_LIMIT_WINDOW_MS'],
     rateLimitMaxRequests: process.env['RATE_LIMIT_MAX_REQUESTS'],
@@ -104,6 +114,7 @@ function loadConfig(): Config {
     oauthSigningKeyPublic: process.env['OAUTH_SIGNING_KEY_PUBLIC'],
     oauthAccessTokenLifetimeSecs: process.env['OAUTH_ACCESS_TOKEN_LIFETIME_SECS'],
     oauthRefreshTokenLifetimeSecs: process.env['OAUTH_REFRESH_TOKEN_LIFETIME_SECS'],
+    oauthRefreshTokenReuseGraceSecs: process.env['OAUTH_REFRESH_TOKEN_REUSE_GRACE_SECS'],
     oauthAuthCodeLifetimeSecs: process.env['OAUTH_AUTH_CODE_LIFETIME_SECS'],
     oauthAllowDynamicRegistration: process.env['OAUTH_ALLOW_DYNAMIC_REGISTRATION'],
     oauthAllowedRedirectPatterns: process.env['OAUTH_ALLOWED_REDIRECT_PATTERNS'],

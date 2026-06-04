@@ -7,14 +7,32 @@
  */
 
 import type { ICachePlugin, TokenCacheContext } from '@azure/msal-common/node';
+import { config } from '../utils/config.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 import { getRedisClient } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
 
 const BASE_REDIS_KEY = 'm365-mcp:msal-cache';
-const TTL_SECONDS = 86400; // 24 hours
+// Aligned with the session TTL: the cache holds the Entra refresh token and
+// must live as long as the session it belongs to.
+const TTL_SECONDS = config.sessionTtlSecs;
 
 // In-memory fallback for development (map of keys to data)
 const memoryCache = new Map<string, string>();
+
+/**
+ * The MSAL cache blob contains the Entra refresh token - encrypt at rest
+ * like session tokens. Entries written before encryption was introduced
+ * are plaintext JSON; decode() falls back transparently and the next
+ * write re-encrypts them.
+ */
+function decode(stored: string): string {
+  try {
+    return decrypt(stored);
+  } catch {
+    return stored; // legacy plaintext entry
+  }
+}
 
 async function readCache(partitionKey: string): Promise<string | null> {
   const redis = getRedisClient();
@@ -24,28 +42,31 @@ async function readCache(partitionKey: string): Promise<string | null> {
     if (data) {
       // Refresh TTL on read to prevent cache expiry while session is still active
       redis.expire(key, TTL_SECONDS).catch(() => {});
-      return data;
+      return decode(data);
     }
     // Migration fallback: try the old global key for sessions created before per-session cache.
     // Safe because acquireTokenSilent filters by localAccountId per session.
     const legacyData = await redis.get(BASE_REDIS_KEY);
     if (legacyData) {
       logger.info({ partitionKey }, 'Migrating MSAL cache from global to per-session key');
-      await redis.setex(key, TTL_SECONDS, legacyData);
-      return legacyData;
+      const plain = decode(legacyData);
+      await redis.setex(key, TTL_SECONDS, encrypt(plain));
+      return plain;
     }
     return null;
   }
-  return memoryCache.get(key) ?? memoryCache.get(BASE_REDIS_KEY) ?? null;
+  const data = memoryCache.get(key) ?? memoryCache.get(BASE_REDIS_KEY) ?? null;
+  return data ? decode(data) : null;
 }
 
 async function writeCache(partitionKey: string, data: string): Promise<void> {
   const redis = getRedisClient();
   const key = `${BASE_REDIS_KEY}:${partitionKey}`;
+  const payload = encrypt(data);
   if (redis) {
-    await redis.setex(key, TTL_SECONDS, data);
+    await redis.setex(key, TTL_SECONDS, payload);
   } else {
-    memoryCache.set(key, data);
+    memoryCache.set(key, payload);
   }
 }
 

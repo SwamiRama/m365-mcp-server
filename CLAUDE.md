@@ -32,7 +32,12 @@ Open WebUI (OAuth Client) → MCP Server (Auth + Resource Server) → Azure AD (
 - `scripts/test-local-oauth.sh` - Voller OAuth Flow Test
 - `scripts/test-sharepoint-az.sh` - SharePoint Test mit Azure CLI
 
-## Offene Punkte
-- [ ] Persistente OAuth Signing Keys konfigurieren (OAUTH_SIGNING_KEY_PRIVATE/PUBLIC)
-- [ ] Redis für persistente Sessions in Produktion
-- [ ] Container Restart invalidiert alle Tokens (ephemere Keys)
+## Token-Lifetimes (seit 2026-06-04)
+- Refresh-Tokens rotieren bei jedem Refresh-Grant; Lifetime via `OAUTH_REFRESH_TOKEN_LIFETIME_SECS` (Prod: 30d)
+- Session-TTL via `SESSION_TTL_SECONDS` (sliding, Prod: 30d) — muss >= Refresh-Token-Lifetime sein, Boot-Validierung erzwingt das
+- Rotation-Grace `OAUTH_REFRESH_TOKEN_REUSE_GRACE_SECS` (Default 60s) toleriert konkurrierende Refreshes (Open WebUI 2-6 Replicas); Reuse nach Grace revoked die Token-Familie (Log-Event `oauth.refresh_token_reuse`)
+- MSAL-Cache + Sessions liegen AES-256-GCM-verschlüsselt in Redis (Key aus SESSION_SECRET)
+
+## Erledigte Punkte
+- [x] Persistente OAuth Signing Keys (Key Vault → OAUTH_SIGNING_KEY_PRIVATE/PUBLIC, via Terraform)
+- [x] Redis für persistente Sessions in Produktion (REDIS_URL aus Key Vault)

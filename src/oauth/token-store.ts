@@ -171,6 +171,12 @@ const store: TokenStore = redisClient
   ? new RedisTokenStore(redisClient)
   : new MemoryTokenStore();
 
+// How long a rotated token's tombstone is kept after its grace period.
+// Within this window a reuse is detected as a theft indicator (OAuth 2.1
+// Section 4.3.1) and the whole token family is revoked. After the window
+// the record is evicted and reuse degrades to a plain invalid_grant.
+const ROTATED_TOKEN_RETENTION_SECS = 600;
+
 /**
  * Generate a secure opaque refresh token
  */
@@ -233,11 +239,40 @@ export async function validateRefreshToken(token: string): Promise<RefreshTokenR
     return null;
   }
 
+  // Reuse of a rotated token after its grace period is a theft indicator
+  // (OAuth 2.1 Section 4.3.1) - revoke the whole token family. Checked
+  // BEFORE the hard expiry so an expired tombstone still triggers
+  // family revocation instead of degrading to a plain invalid_grant.
+  // Note: this only detects replay of superseded tokens. A thief who
+  // stays on the rotation head of an otherwise idle session is not
+  // detectable without sender-constrained tokens (DPoP/mTLS).
+  if (record.graceUntil !== undefined && Date.now() > record.graceUntil) {
+    logger.warn(
+      {
+        event: 'oauth.refresh_token_reuse',
+        clientId: record.clientId,
+        sessionId: record.sessionId,
+      },
+      'Rotated refresh token reused after grace period - revoking all tokens for session'
+    );
+    await store.deleteBySession(record.sessionId);
+    return null;
+  }
+
   // Check expiration
   if (Date.now() > record.expiresAt) {
     logger.debug('Refresh token expired');
     await store.delete(tokenHash);
     return null;
+  }
+
+  // Rotated token within the grace period: tolerate concurrent refreshes
+  // from multiple client replicas.
+  if (record.graceUntil !== undefined) {
+    logger.info(
+      { clientId: record.clientId, sessionId: record.sessionId },
+      'Rotated refresh token reused within grace period (concurrent refresh tolerated)'
+    );
   }
 
   return record;
@@ -268,8 +303,19 @@ export async function rotateRefreshToken(
     rotatedFrom: oldTokenHash,
   });
 
-  // Invalidate old token
-  await store.delete(oldTokenHash);
+  // Keep the old token as a short-lived tombstone instead of deleting it:
+  // valid until graceUntil (concurrent refresh tolerance), afterwards a
+  // reuse-detection marker. Re-rotation within the grace period must NOT
+  // restart the grace clock.
+  if (oldRecord.graceUntil === undefined) {
+    oldRecord.graceUntil = Date.now() + config.oauthRefreshTokenReuseGraceSecs * 1000;
+    oldRecord.replacedBy = hashToken(newToken);
+    await store.set(
+      oldTokenHash,
+      oldRecord,
+      config.oauthRefreshTokenReuseGraceSecs + ROTATED_TOKEN_RETENTION_SECS
+    );
+  }
 
   logger.debug(
     { clientId: params.clientId, sessionId: params.sessionId },

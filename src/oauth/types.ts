@@ -74,6 +74,8 @@ export interface RefreshTokenRecord {
   expiresAt: number;
   rotatedFrom?: string; // Previous token (for rotation)
   createdAt: number;
+  graceUntil?: number; // Set on rotation: old token stays valid until this time (concurrent refresh tolerance)
+  replacedBy?: string; // Hash of the successor token (for audit)
 }
 
 /**

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Redis } from 'ioredis';
 import { config } from '../utils/config.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 import { logger } from '../utils/logger.js';
 import { getRedisClient } from '../utils/redis.js';
 
@@ -47,7 +48,11 @@ class MemorySessionStore implements SessionStore {
     return entry.session;
   }
 
-  async set(sessionId: string, session: UserSession, ttlSeconds = 86400): Promise<void> {
+  async set(
+    sessionId: string,
+    session: UserSession,
+    ttlSeconds = config.sessionTtlSecs
+  ): Promise<void> {
     this.sessions.set(sessionId, {
       session,
       expiresAt: Date.now() + ttlSeconds * 1000,
@@ -79,7 +84,11 @@ class RedisSessionStore implements SessionStore {
     }
   }
 
-  async set(sessionId: string, session: UserSession, ttlSeconds = 86400): Promise<void> {
+  async set(
+    sessionId: string,
+    session: UserSession,
+    ttlSeconds = config.sessionTtlSecs
+  ): Promise<void> {
     await this.client.setex(
       this.prefix + sessionId,
       ttlSeconds,
@@ -98,51 +107,6 @@ const store: SessionStore = redisClient
   ? new RedisSessionStore(redisClient)
   : new MemorySessionStore();
 
-// Encryption for sensitive session data
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12;
-
-function deriveKey(secret: string): Buffer {
-  return crypto.scryptSync(secret, 'm365-mcp-salt', 32);
-}
-
-function encrypt(data: string): string {
-  const key = deriveKey(config.sessionSecret);
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-
-  let encrypted = cipher.update(data, 'utf8', 'base64');
-  encrypted += cipher.final('base64');
-
-  const tag = cipher.getAuthTag();
-
-  // Format: iv:tag:encrypted
-  return `${iv.toString('base64')}:${tag.toString('base64')}:${encrypted}`;
-}
-
-function decrypt(encryptedData: string): string {
-  const parts = encryptedData.split(':');
-  if (parts.length !== 3) {
-    throw new Error('Invalid encrypted data format');
-  }
-
-  const [ivStr, tagStr, encrypted] = parts;
-  if (!ivStr || !tagStr || !encrypted) {
-    throw new Error('Invalid encrypted data format');
-  }
-
-  const key = deriveKey(config.sessionSecret);
-  const iv = Buffer.from(ivStr, 'base64');
-  const tag = Buffer.from(tagStr, 'base64');
-
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(tag);
-
-  let decrypted = decipher.update(encrypted, 'base64', 'utf8');
-  decrypted += decipher.final('utf8');
-
-  return decrypted;
-}
 
 export class SessionManager {
   /**
