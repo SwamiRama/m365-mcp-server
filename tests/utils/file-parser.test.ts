@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { deflateRawSync } from 'node:zlib';
 
 // Mock config before importing
 vi.mock('../../src/utils/config.js', () => ({
@@ -20,7 +21,7 @@ vi.mock('../../src/utils/logger.js', () => ({
   },
 }));
 
-import { isParsableMimeType, parseFileContent, stripHtmlTags } from '../../src/utils/file-parser.js';
+import { isParsableMimeType, parseFileContent, stripHtmlTags, inflateRawCapped } from '../../src/utils/file-parser.js';
 
 describe('file-parser', () => {
   describe('isParsableMimeType', () => {
@@ -144,6 +145,21 @@ describe('file-parser', () => {
       const result = await parseFileContent(buffer, 'text/html', 'entities.html');
 
       expect(result.text).toContain('5 > 3 & 2 < 4');
+    });
+  });
+
+  describe('inflateRawCapped (decompression-bomb guard)', () => {
+    it('round-trips normally-sized deflated data', () => {
+      const original = Buffer.from('hello world, this is a slide');
+      const result = inflateRawCapped(deflateRawSync(original), 1024);
+      expect(result.equals(original)).toBe(true);
+    });
+
+    it('throws when decompressed output exceeds the cap (zip bomb)', () => {
+      // 2MB of zeros compresses to a few hundred bytes (high ratio = bomb shape)
+      const bomb = deflateRawSync(Buffer.alloc(2 * 1024 * 1024));
+      expect(bomb.length).toBeLessThan(64 * 1024); // sanity: it really is tiny compressed
+      expect(() => inflateRawCapped(bomb, 64 * 1024)).toThrow();
     });
   });
 

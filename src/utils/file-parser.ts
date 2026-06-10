@@ -297,6 +297,24 @@ function decodeXmlEntities(text: string): string {
  * Minimal ZIP entry extraction for PPTX/DOCX files.
  * Handles the ZIP format using only built-in Node.js modules.
  */
+// Per-entry decompression cap to defend against decompression ("zip") bombs.
+// Without it, inflateRawSync's default maxOutputLength (~buffer.kMaxLength) lets a
+// tiny crafted entry allocate gigabytes and OOM the process.
+// 50 MB is far beyond any real slide XML but lethal to a bomb.
+const MAX_DECOMPRESSED_BYTES_PER_ENTRY = 50 * 1024 * 1024;
+
+/**
+ * Inflate a raw-deflate buffer with a hard cap on output size. zlib throws
+ * ERR_BUFFER_TOO_LARGE if the output would exceed maxBytes, so allocation stays
+ * bounded regardless of the (attacker-controlled) ZIP header sizes.
+ */
+export function inflateRawCapped(
+  compressedData: Buffer,
+  maxBytes: number = MAX_DECOMPRESSED_BYTES_PER_ENTRY
+): Buffer {
+  return inflateRawSync(compressedData, { maxOutputLength: maxBytes });
+}
+
 function extractZipEntries(
   buffer: Buffer
 ): Array<{ name: string; data: Buffer }> {
@@ -370,8 +388,8 @@ function extractZipEntries(
         // Stored (no compression)
         data = Buffer.from(compressedData);
       } else if (compressionMethod === 8) {
-        // Deflated - use built-in zlib
-        data = Buffer.from(inflateRawSync(compressedData));
+        // Deflated - use built-in zlib, capped against decompression bombs
+        data = Buffer.from(inflateRawCapped(compressedData));
       } else {
         // Skip unsupported compression methods
         offset += 46 + fileNameLength + extraFieldLength + commentLength;
