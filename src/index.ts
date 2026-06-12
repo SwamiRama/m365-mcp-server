@@ -14,7 +14,7 @@ import { sessionManager, type UserSession, type TokenSet } from './auth/session.
 import { createGraphClient } from './graph/client.js';
 import { ToolExecutor, allToolDefinitions } from './tools/index.js';
 import { oauthRouter } from './oauth/routes.js';
-import { bearerAuthMiddleware } from './oauth/middleware.js';
+import { bearerAuthMiddleware, requireMcpAuth } from './oauth/middleware.js';
 import { audit } from './utils/audit.js';
 import { mapGraphError } from './utils/graph-errors.js';
 import { pingRedis, closeRedis } from './utils/redis.js';
@@ -338,7 +338,7 @@ app.get('/auth/status', (req: Request, res: Response): void => {
 const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
 // MCP endpoint
-app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
+app.post('/mcp', requireMcpAuth, async (req: Request, res: Response): Promise<void> => {
   const protocolVersion = req.headers['mcp-protocol-version'] as string;
 
   // Validate protocol version (allow missing for backwards compatibility)
@@ -351,26 +351,8 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Check authentication - return 401 with OAuth metadata location if not authenticated
-  // This enables OAuth discovery for MCP clients like Open WebUI
-  if (!req.session?.tokens) {
-    res.setHeader(
-      'WWW-Authenticate',
-      `Bearer resource_metadata="${config.baseUrl}/.well-known/oauth-authorization-server"`
-    );
-    res.status(401).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32001,
-        message: 'Authentication required',
-        data: {
-          authorizationServer: `${config.baseUrl}/.well-known/oauth-authorization-server`,
-        },
-      },
-      id: null,
-    });
-    return;
-  }
+  // Authentication is enforced by requireMcpAuth: only a verified Bearer JWT
+  // (req.oauthToken, with req.session loaded from its subject) reaches here.
 
   // Handle JSON-RPC request
   const jsonRpcRequest = req.body;
@@ -393,6 +375,13 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Surface the session id via the standard MCP transport header (not in the
+    // JSON-RPC body) on initialize, so spec-compliant clients get it the normal
+    // way. It is no longer an authentication credential (see requireMcpAuth).
+    if (jsonRpcRequest.method === 'initialize' && req.session) {
+      res.setHeader('Mcp-Session-Id', req.session.id);
+    }
+
     res.json({
       jsonrpc: '2.0',
       result,
@@ -413,7 +402,7 @@ app.post('/mcp', async (req: Request, res: Response): Promise<void> => {
 });
 
 // MCP GET endpoint for SSE streams
-app.get('/mcp', (req: Request, res: Response): void => {
+app.get('/mcp', requireMcpAuth, (req: Request, res: Response): void => {
   const accept = req.headers['accept'] as string ?? '';
 
   if (!accept.includes('text/event-stream')) {
@@ -421,18 +410,7 @@ app.get('/mcp', (req: Request, res: Response): void => {
     return;
   }
 
-  // Check authentication for SSE endpoint
-  if (!req.session?.tokens) {
-    res.setHeader(
-      'WWW-Authenticate',
-      `Bearer resource_metadata="${config.baseUrl}/.well-known/oauth-authorization-server"`
-    );
-    res.status(401).json({
-      error: 'Authentication required',
-      authorizationServer: `${config.baseUrl}/.well-known/oauth-authorization-server`,
-    });
-    return;
-  }
+  // Authentication enforced by requireMcpAuth (verified Bearer JWT only).
 
   // Set SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -453,7 +431,9 @@ app.get('/mcp', (req: Request, res: Response): void => {
 });
 
 // MCP session termination
-app.delete('/mcp', async (req: Request, res: Response) => {
+app.delete('/mcp', requireMcpAuth, async (req: Request, res: Response) => {
+  // req.session is loaded from the verified Bearer token (requireMcpAuth), so a
+  // caller can only terminate its own session — not an arbitrary known one.
   if (req.session) {
     await sessionManager.deleteSession(req.session.id);
     res.clearCookie('mcp-session');
@@ -540,8 +520,6 @@ async function handleInitialize(
       name: 'm365-mcp-server',
       version: '1.0.0',
     },
-    // Return session ID in header (set by response)
-    _sessionId: session.id,
   };
 }
 

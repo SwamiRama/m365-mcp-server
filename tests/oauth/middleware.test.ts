@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
-import { bearerAuthMiddleware, requireBearerAuth, requireAuth } from '../../src/oauth/middleware.js';
+import { bearerAuthMiddleware, requireBearerAuth, requireAuth, requireMcpAuth } from '../../src/oauth/middleware.js';
 
 // Mock dependencies
 vi.mock('../../src/utils/redis.js', () => ({
@@ -226,6 +226,57 @@ describe('OAuth Middleware WWW-Authenticate header', () => {
       const next: NextFunction = vi.fn();
 
       requireAuth(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('requireMcpAuth', () => {
+    it('rejects a request without a verified Bearer token (no oauthToken)', () => {
+      // A raw session (e.g. from the mcp-session-id header / cookie) must NOT
+      // grant /mcp access — only a verified Bearer JWT (req.oauthToken) does.
+      const req = mockReq();
+      (req as Record<string, unknown>).session = {
+        id: 'sess-1',
+        tokens: { accessToken: 'tok', scope: 'mcp:tools', expiresAt: Date.now() + 3600000 },
+      };
+      const res = mockRes();
+      const next: NextFunction = vi.fn();
+
+      requireMcpAuth(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'WWW-Authenticate',
+        expect.stringMatching(WWW_AUTH_PATTERN)
+      );
+      // JSON-RPC-shaped error so MCP clients can discover the auth server
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jsonrpc: '2.0',
+          error: expect.objectContaining({ code: -32001 }),
+        })
+      );
+    });
+
+    it('calls next when a verified Bearer token is present (oauthToken set)', () => {
+      const req = mockReq();
+      (req as Record<string, unknown>).oauthToken = {
+        iss: 'http://localhost:3000',
+        sub: 'sess-1',
+        aud: 'client-1',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'jti-1',
+        scope: 'mcp:tools',
+        userId: 'user-1',
+      };
+      const res = mockRes();
+      const next: NextFunction = vi.fn();
+
+      requireMcpAuth(req, res, next);
 
       expect(next).toHaveBeenCalled();
       expect(res.status).not.toHaveBeenCalled();

@@ -79,9 +79,8 @@ export async function bearerAuthMiddleware(
     return;
   }
 
-  // Validate issuer
-  // Note: We don't check issuer here since verifyJwt already validates signature
-  // which proves the token was issued by us
+  // Issuer/audience are validated inside verifyJwt (signature alone does not
+  // prove the expected claims).
 
   // Load session from token subject (session ID)
   const session = await sessionManager.getSession(payload.sub);
@@ -159,6 +158,36 @@ export function requireAuth(
     res.status(401).json({
       error: 'unauthorized',
       error_description: 'Authentication required',
+    });
+    return;
+  }
+
+  next();
+}
+
+/**
+ * Require a verified Bearer JWT for MCP endpoints.
+ *
+ * The global bearerAuthMiddleware sets req.oauthToken (and loads req.session
+ * from the token subject) only when a valid Bearer JWT is presented. Gating on
+ * req.oauthToken means a raw mcp-session-id header or mcp-session cookie can no
+ * longer authenticate /mcp on its own — closing the "session ID as a bearer
+ * credential" gap. The 401 keeps the JSON-RPC shape + WWW-Authenticate header so
+ * MCP clients can still discover the authorization server.
+ */
+export function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.oauthToken) {
+    res.setHeader('WWW-Authenticate', wwwAuthenticateHeader());
+    res.status(401).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32001,
+        message: 'Authentication required',
+        data: {
+          authorizationServer: `${config.baseUrl}/.well-known/oauth-authorization-server`,
+        },
+      },
+      id: null,
     });
     return;
   }
