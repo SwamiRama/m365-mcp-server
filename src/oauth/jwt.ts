@@ -160,6 +160,20 @@ export function verifyJwt(token: string): AccessTokenPayload | null {
     // Decode and validate payload
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as AccessTokenPayload;
 
+    // Validate issuer: a valid signature only proves the token was minted with
+    // our key, not that it carries the claims we expect. Reject anything not
+    // issued by this server (defense-in-depth against token confusion / replay
+    // across deployments sharing a key).
+    if (payload.iss !== config.baseUrl) {
+      return null;
+    }
+
+    // Require an audience claim. We don't pin a single value here (verifyJwt is
+    // generic), but a token without aud is malformed for our issuance path.
+    if (!payload.aud) {
+      return null;
+    }
+
     // Check expiration
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp && payload.exp < now) {
