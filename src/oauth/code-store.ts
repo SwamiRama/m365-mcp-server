@@ -14,6 +14,9 @@ interface CodeStore {
   get(code: string): Promise<AuthorizationCode | null>;
   set(code: string, authCode: AuthorizationCode, ttlSeconds: number): Promise<void>;
   delete(code: string): Promise<void>;
+  // Atomic get-and-delete: returns the code and removes it in one indivisible
+  // step so two concurrent token requests can never both redeem the same code.
+  consume(code: string): Promise<AuthorizationCode | null>;
   // Pending authorizations (during Azure AD flow)
   getPending(sessionId: string): Promise<PendingAuthorization | null>;
   setPending(sessionId: string, pending: PendingAuthorization, ttlSeconds: number): Promise<void>;
@@ -34,7 +37,10 @@ class MemoryCodeStore implements CodeStore {
       return null;
     }
 
-    return entry.authCode;
+    // Return a copy, not the stored reference: callers must not be able to
+    // mutate store state, and this matches the Redis path (JSON.parse yields a
+    // fresh object). Handing out the live reference masked the consume race.
+    return { ...entry.authCode };
   }
 
   async set(code: string, authCode: AuthorizationCode, ttlSeconds: number): Promise<void> {
@@ -46,6 +52,17 @@ class MemoryCodeStore implements CodeStore {
 
   async delete(code: string): Promise<void> {
     this.codes.delete(code);
+  }
+
+  async consume(code: string): Promise<AuthorizationCode | null> {
+    // Synchronous get+delete (no await between the read and the removal) — under
+    // Promise.all only the first caller observes the entry, the rest see nothing.
+    const entry = this.codes.get(code);
+    if (!entry) return null;
+    this.codes.delete(code);
+
+    if (Date.now() > entry.expiresAt) return null;
+    return { ...entry.authCode };
   }
 
   async getPending(sessionId: string): Promise<PendingAuthorization | null> {
@@ -99,6 +116,32 @@ class RedisCodeStore implements CodeStore {
 
   async delete(code: string): Promise<void> {
     await this.client.del(this.codePrefix + code);
+  }
+
+  // Atomic GET+DEL via a Lua script. EVAL bodies run atomically in Redis, so
+  // concurrent token requests cannot both read the code before it is deleted.
+  // (Avoids depending on GETDEL, which requires Redis 6.2+.)
+  private static readonly CONSUME_SCRIPT =
+    "local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]) end; return v";
+
+  async consume(code: string): Promise<AuthorizationCode | null> {
+    const data = (await this.client.eval(
+      RedisCodeStore.CONSUME_SCRIPT,
+      1,
+      this.codePrefix + code
+    )) as string | null;
+
+    if (!data) return null;
+
+    let authCode: AuthorizationCode;
+    try {
+      authCode = JSON.parse(data) as AuthorizationCode;
+    } catch {
+      return null;
+    }
+
+    if (Date.now() > authCode.expiresAt) return null;
+    return authCode;
   }
 
   async getPending(sessionId: string): Promise<PendingAuthorization | null> {
@@ -255,31 +298,15 @@ export async function peekAuthorizationCode(code: string): Promise<Authorization
  * Consume an authorization code (single-use)
  */
 export async function consumeAuthorizationCode(code: string): Promise<AuthorizationCode | null> {
-  const authCode = await store.get(code);
+  // Atomic get-and-delete. A code is single-use: the store removes it as part of
+  // the read, so a concurrent (or replayed) request finds nothing. This closes
+  // the ToCToU race where get→check→delete let two requests redeem one code.
+  const authCode = await store.consume(code);
 
   if (!authCode) {
-    logger.debug('Authorization code not found');
+    logger.debug('Authorization code not found, expired, or already consumed');
     return null;
   }
-
-  // Check if already used
-  if (authCode.used) {
-    logger.warn({ code: code.slice(0, 8) + '...' }, 'Authorization code already used');
-    // Delete the code to prevent further attempts
-    await store.delete(code);
-    return null;
-  }
-
-  // Check expiration
-  if (Date.now() > authCode.expiresAt) {
-    logger.debug('Authorization code expired');
-    await store.delete(code);
-    return null;
-  }
-
-  // Mark as used and delete
-  authCode.used = true;
-  await store.delete(code);
 
   logger.debug({ clientId: authCode.clientId }, 'Authorization code consumed');
 
