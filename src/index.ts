@@ -430,14 +430,16 @@ app.get('/mcp', requireMcpAuth, (req: Request, res: Response): void => {
   });
 });
 
-// MCP session termination
-app.delete('/mcp', requireMcpAuth, async (req: Request, res: Response) => {
-  // req.session is loaded from the verified Bearer token (requireMcpAuth), so a
-  // caller can only terminate its own session — not an arbitrary known one.
-  if (req.session) {
-    await sessionManager.deleteSession(req.session.id);
-    res.clearCookie('mcp-session');
-  }
+// MCP transport-session termination (Streamable HTTP). This ends the client's
+// MCP transport session only. It must NOT delete the OAuth user session: that
+// session holds the Microsoft 365 tokens and is referenced by the client's
+// still-valid OAuth refresh token. Deleting it here orphaned the refresh token,
+// so the next token refresh failed with invalid_grant "Session no longer valid"
+// and clients (e.g. Open WebUI) surfaced "Failed to connect to MCP server" mid
+// conversation. The transport keeps no per-session server state to free (the
+// Mcp-Session-Id is just the session id echoed back), so we simply acknowledge.
+// Identity/grant teardown lives in /auth/logout and token revocation.
+app.delete('/mcp', requireMcpAuth, (_req: Request, res: Response) => {
   res.status(200).send();
 });
 
@@ -744,9 +746,11 @@ async function start(): Promise<void> {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
-start().catch((err) => {
-  logger.fatal({ err }, 'Failed to start server');
-  process.exit(1);
-});
+if (config.nodeEnv !== 'test') {
+  start().catch((err) => {
+    logger.fatal({ err }, 'Failed to start server');
+    process.exit(1);
+  });
+}
 
 export { app };
