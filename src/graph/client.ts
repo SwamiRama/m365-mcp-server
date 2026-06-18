@@ -369,7 +369,7 @@ export class GraphClient {
     return this.fetchAllPages<GraphMailFolder>(
       () =>
         this.client
-          .api(`${base}/mailFolders/${parentFolderId}/childFolders`)
+          .api(`${base}/mailFolders/${encodeURIComponent(parentFolderId)}/childFolders`)
           .top(50)
           .select('id,displayName,parentFolderId,childFolderCount,unreadItemCount,totalItemCount')
           .get(),
@@ -391,7 +391,7 @@ export class GraphClient {
 
     const base = userId ? `/users/${userId}` : '/me';
     const endpoint = folderId
-      ? `${base}/mailFolders/${folderId}/messages`
+      ? `${base}/mailFolders/${encodeURIComponent(folderId)}/messages`
       : `${base}/messages`;
 
     let request = this.client.api(endpoint);
@@ -461,7 +461,7 @@ export class GraphClient {
     return this.executeWithRetry(
       () =>
         this.client
-          .api(`${base}/messages/${messageId}`)
+          .api(`${base}/messages/${encodeURIComponent(messageId)}`)
           .select(selectFields.join(','))
           .expand('attachments($select=id,name,contentType,size,isInline)')
           .get(),
@@ -474,7 +474,7 @@ export class GraphClient {
     return this.executeWithRetry(
       () =>
         this.client
-          .api(`${base}/messages/${messageId}/attachments/${attachmentId}`)
+          .api(`${base}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`)
           .get(),
       'getAttachment'
     );
@@ -507,7 +507,7 @@ export class GraphClient {
     const result = await this.executeWithRetry(
       () =>
         this.client
-          .api(`/sites/${siteId}/drives`)
+          .api(`/sites/${encodeURIComponent(siteId)}/drives`)
           .select('id,name,driveType,webUrl,owner')
           .get(),
       'listSiteDrives'
@@ -640,8 +640,8 @@ export class GraphClient {
     // If itemId is provided, list children of that item
     // Otherwise, list root items
     const endpoint = itemId
-      ? `/drives/${driveId}/items/${itemId}/children`
-      : `/drives/${driveId}/root/children`;
+      ? `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children`
+      : `/drives/${encodeURIComponent(driveId)}/root/children`;
 
     const result = await this.executeWithRetry(
       () =>
@@ -662,7 +662,7 @@ export class GraphClient {
     return this.executeWithRetry(
       () =>
         this.client
-          .api(`/drives/${driveId}/items/${itemId}`)
+          .api(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`)
           .select(
             'id,name,webUrl,size,createdDateTime,lastModifiedDateTime,file,folder,parentReference'
           )
@@ -696,7 +696,7 @@ export class GraphClient {
     const { calendarId, top = 25, filter, orderBy } = options;
 
     const endpoint = calendarId
-      ? `/me/calendars/${calendarId}/events`
+      ? `/me/calendars/${encodeURIComponent(calendarId)}/events`
       : '/me/events';
 
     let request = this.client
@@ -725,7 +725,7 @@ export class GraphClient {
     const { startDateTime, endDateTime, calendarId, top = 25, orderBy } = options;
 
     const endpoint = calendarId
-      ? `/me/calendars/${calendarId}/calendarView`
+      ? `/me/calendars/${encodeURIComponent(calendarId)}/calendarView`
       : '/me/calendarView';
 
     let request = this.client
@@ -748,7 +748,7 @@ export class GraphClient {
     return this.executeWithRetry(
       () =>
         this.client
-          .api(`/me/events/${eventId}`)
+          .api(`/me/events/${encodeURIComponent(eventId)}`)
           .select(
             'id,subject,bodyPreview,body,start,end,location,organizer,attendees,isAllDay,showAs,importance,webLink,onlineMeeting,recurrence'
           )
@@ -782,7 +782,7 @@ export class GraphClient {
     const response = await this.executeWithRetry(
       () =>
         this.client
-          .api(`/drives/${driveId}/items/${itemId}/content`)
+          .api(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/content`)
           .responseType('arraybuffer' as unknown as import('@microsoft/microsoft-graph-client').ResponseType)
           .get(),
       'getFileContent'
