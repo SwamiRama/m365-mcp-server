@@ -221,14 +221,17 @@ export class MailTools {
     // This makes message IDs portable across MCP sessions (where /me might resolve differently).
     const effectiveMailbox = validated.mailbox ?? this.userContext?.userEmail;
 
+    // Single, non-contradictory instruction. 'me' is a safe sentinel: the server
+    // normalizes me/mine/personal/empty to the personal mailbox (/me), and a real
+    // address routes to /users/{address}. Either way the model passes one value.
+    const mailboxContext = effectiveMailbox ?? 'me';
+
     return {
       messages: result.messages.map((m) => formatMessage(m)),
       count: result.messages.length,
       hasMore: !!result.nextLink,
-      mailbox_context: effectiveMailbox ?? 'personal',
-      _note: effectiveMailbox
-        ? `These message IDs belong to mailbox '${effectiveMailbox}'. When calling mail_get_message, you MUST pass mailbox='${effectiveMailbox}'.`
-        : "These message IDs belong to your personal mailbox. When calling mail_get_message, do NOT pass a 'mailbox' parameter.",
+      mailbox_context: mailboxContext,
+      _note: `To open any of these messages with mail_get_message (or mail_get_attachment), pass mailbox='${mailboxContext}' exactly as shown here, together with the message's id. Do not alter or invent these values.`,
     };
   }
 

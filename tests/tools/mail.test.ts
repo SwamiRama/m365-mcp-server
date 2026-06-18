@@ -65,11 +65,14 @@ describe('Mail Tools', () => {
       expect(result).toHaveProperty('count', 2);
     });
 
-    it('should include mailbox_context "personal" when no mailbox and no userContext', async () => {
+    it('should use the normalizable "me" sentinel as mailbox_context when no mailbox and no userContext', async () => {
       const result = await mailTools.listMessages({}) as Record<string, unknown>;
 
-      expect(result['mailbox_context']).toBe('personal');
-      expect(result['_note']).toContain('do NOT pass');
+      // 'me' is server-normalized to /me; the note must tell the model to pass it
+      // (no longer the contradictory "do NOT pass a mailbox parameter").
+      expect(result['mailbox_context']).toBe('me');
+      expect(result['_note']).toContain("mailbox='me'");
+      expect(result['_note']).not.toContain('do NOT pass');
     });
 
     it('should include mailbox_context with user email when userContext is provided', async () => {
