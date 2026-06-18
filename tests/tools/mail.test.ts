@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MailTools, listMessagesInputSchema, getMessageInputSchema, listFoldersInputSchema, getAttachmentInputSchema } from '../../src/tools/mail.js';
 import type { GraphClient, GraphMessage, GraphAttachment } from '../../src/graph/client.js';
 import { __clearIdCache } from '../../src/utils/id-cache.js';
+import { __clearHandleStore } from '../../src/utils/handle-store.js';
 
 describe('Mail Tools', () => {
   let mockGraphClient: GraphClient;
@@ -36,6 +37,7 @@ describe('Mail Tools', () => {
 
   beforeEach(() => {
     __clearIdCache();
+    __clearHandleStore();
     mockGraphClient = {
       listMessages: vi.fn().mockResolvedValue({ messages: mockMessages }),
       getMessage: vi.fn().mockResolvedValue(mockMessages[0]),
@@ -89,11 +91,12 @@ describe('Mail Tools', () => {
       expect(result['_note']).toContain('OMIT the mailbox parameter');
     });
 
-    it('passes through an explicit shared mailbox and tells the model to set it', async () => {
+    it('passes through an explicit shared mailbox and tells the model the id already carries it', async () => {
       const result = await mailTools.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
 
       expect(result['mailbox_context']).toBe('shared@example.com');
-      expect(result['_note']).toContain("mailbox='shared@example.com'");
+      expect(result['_note']).toContain("shared@example.com");
+      expect(result['_note']).toContain("id already carries it");
     });
 
     it('resolves a re-encoded message id from a prior list back to the real id', async () => {
@@ -549,6 +552,57 @@ describe('Mail Tools', () => {
       await expect(
         mailTools.getAttachment({ message_id: 'msg-1', attachment_id: 'att-1', mailbox: 'shared@example.com' })
       ).rejects.toThrow(/does not belong to mailbox 'shared@example.com'/);
+    });
+  });
+
+  describe('stable handles', () => {
+    const ctx = { userId: 'user-1', userEmail: 'user1@example.com' };
+
+    it('list emits a short handle in id, not the raw Graph id', async () => {
+      const tools = new MailTools(mockGraphClient, ctx);
+      const result = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
+      expect(result.messages[0]?.id).toMatch(/^m_[0-9a-f]{12}$/);
+      expect(result.messages[0]?.id).not.toBe('msg-1');
+    });
+
+    it('get_message resolves a list handle back to the real id for the Graph call', async () => {
+      const tools = new MailTools(mockGraphClient, ctx);
+      const listed = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
+      const handle = listed.messages[0]!.id;
+
+      await tools.getMessage({ message_id: handle });
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true, undefined);
+    });
+
+    it('list recovers the shared mailbox from the handle so the model need not pass it', async () => {
+      const tools = new MailTools(mockGraphClient, ctx);
+      const listed = (await tools.listMessages({ mailbox: 'shared@example.com' })) as {
+        messages: Array<{ id: string }>;
+      };
+      const handle = listed.messages[0]!.id;
+
+      await tools.getMessage({ message_id: handle }); // no mailbox passed
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true, 'shared@example.com');
+    });
+
+    it('a raw Graph id still works (fallback) when passed directly', async () => {
+      const tools = new MailTools(mockGraphClient, ctx);
+      await tools.getMessage({ message_id: 'AAMkRawGraphId==' });
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('AAMkRawGraphId==', true, undefined);
+    });
+
+    it('an unknown/expired handle returns a re-list error without a Graph call', async () => {
+      const tools = new MailTools(mockGraphClient, ctx);
+      await expect(tools.getMessage({ message_id: 'm_000000000000' })).rejects.toThrow(
+        /no longer valid/i
+      );
+      expect(mockGraphClient.getMessage).not.toHaveBeenCalled();
+    });
+
+    it('without user identity, list falls back to the raw id (back-compat)', async () => {
+      const tools = new MailTools(mockGraphClient); // no context
+      const result = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
+      expect(result.messages[0]?.id).toBe('msg-1');
     });
   });
 });

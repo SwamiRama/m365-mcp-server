@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { stripHtmlTags, isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
 import { isTextMimeType, formatFileSize } from '../utils/content-fetcher.js';
 import { rememberId, resolveId } from '../utils/id-cache.js';
+import { handleStore } from '../utils/handle-store.js';
 
 /**
  * User context from the authenticated session.
@@ -105,9 +106,13 @@ const WELL_KNOWN_FOLDERS: Record<string, string> = {
 };
 
 // Output formatters (to minimize PII exposure)
-function formatMessage(message: GraphMessage, includeBody: boolean = false): object {
+function formatMessage(
+  message: GraphMessage,
+  includeBody: boolean = false,
+  refs?: { self?: string; attachments?: Record<string, string> }
+): object {
   const formatted: Record<string, unknown> = {
-    id: message.id,
+    id: refs?.self ?? message.id,
     subject: message.subject,
     preview: message.bodyPreview?.substring(0, 200),
     from: message.from?.emailAddress?.address,
@@ -142,7 +147,7 @@ function formatMessage(message: GraphMessage, includeBody: boolean = false): obj
     const inlineCount = message.attachments.length - regular.length;
     if (regular.length > 0) {
       formatted['attachments'] = regular.map((a) => ({
-        id: a.id,
+        id: refs?.attachments?.[a.id] ?? a.id,
         name: a.name,
         contentType: a.contentType,
         size: a.size,
@@ -177,9 +182,45 @@ export class MailTools {
     this.userContext = userContext;
   }
 
-  // Per-user namespace for the Graph ID resolution cache.
+  // Per-user namespace for the Graph ID resolution cache (id-cache fallback).
   private get userKey(): string {
     return this.userContext?.userId ?? this.userContext?.userEmail ?? 'default';
+  }
+
+  // Authenticated identity for the handle store. No 'default' fallback: without a
+  // real identity we do NOT mint/resolve handles, we fall back to the raw id.
+  private get identityKey(): string | null {
+    return this.userContext?.userId ?? this.userContext?.userEmail ?? null;
+  }
+
+  // Matches a handle we minted (m_/a_ + 12 hex). Real Graph ids never match this.
+  static readonly HANDLE_RE = /^[ma]_[0-9a-f]{12}$/;
+
+  // Mint a handle for an id we are handing out. Without identity, return the raw
+  // id so the model still gets something the raw-id fallback path can resolve.
+  private async mintRef(kind: 'msg' | 'att', realId: string, mailbox?: string): Promise<string> {
+    const key = this.identityKey;
+    if (!key) return realId;
+    return handleStore.mint(key, kind, { realId, mailbox });
+  }
+
+  // Resolve an incoming message_id/attachment_id. Handle -> stored payload (real id
+  // + mailbox). If it looks like our handle but does not resolve, it is stale: tell
+  // the model to re-list rather than firing a doomed Graph call. Otherwise fall back
+  // to the id-cache (re-encoded long id) then passthrough (a correct raw id).
+  private async resolveRef(
+    input: string,
+    mailbox?: string
+  ): Promise<{ id: string; mailbox?: string }> {
+    const key = this.identityKey;
+    if (key && MailTools.HANDLE_RE.test(input)) {
+      const payload = await handleStore.resolve(key, input);
+      if (payload) return { id: payload.realId, mailbox: payload.mailbox ?? mailbox };
+      throw new Error(
+        'This reference is no longer valid (it may have expired). Call mail_list_messages again and use the id from the new results.'
+      );
+    }
+    return { id: resolveId(this.userKey, input) ?? input, mailbox };
   }
 
   /**
@@ -229,22 +270,24 @@ export class MailTools {
       userId: validated.mailbox,
     });
 
-    // Remember the canonical IDs we hand out so a later (possibly re-encoded) relay resolves back.
+    // Remember the canonical IDs for the id-cache fallback, and mint a short handle
+    // per message so the model never has to relay the long opaque Graph id.
     result.messages.forEach((m) => rememberId(this.userKey, m.id));
+    const messages = await Promise.all(
+      result.messages.map(async (m) =>
+        formatMessage(m, false, { self: await this.mintRef('msg', m.id, validated.mailbox) })
+      )
+    );
 
-    // The personal mailbox is the default (/me) and needs no parameter. Only a shared
-    // mailbox needs a value. Tell the model to OMIT mailbox for its own mail (so it
-    // cannot invent "me"/""), and to pass the shared address only when these messages
-    // came from one. Mirrors how the upstream server scopes shared vs personal.
     const sharedMailbox = validated.mailbox;
 
     return {
-      messages: result.messages.map((m) => formatMessage(m)),
+      messages,
       count: result.messages.length,
       hasMore: !!result.nextLink,
       mailbox_context: sharedMailbox ?? 'personal',
       _note: sharedMailbox
-        ? `These messages are from the shared mailbox '${sharedMailbox}'. To open one with mail_get_message or mail_get_attachment, set mailbox='${sharedMailbox}' and pass the message's id.`
+        ? `These messages are from the shared mailbox '${sharedMailbox}'. To open one with mail_get_message or mail_get_attachment, pass the message's id (you do not need to pass mailbox; the id already carries it).`
         : `These messages are from your own mailbox. To open one with mail_get_message or mail_get_attachment, pass only the message's id and OMIT the mailbox parameter.`,
     };
   }
@@ -254,24 +297,30 @@ export class MailTools {
    */
   async getMessage(input: GetMessageInput): Promise<object> {
     const validated = getMessageInputSchema.parse(input);
-    const messageId = resolveId(this.userKey, validated.message_id) ?? validated.message_id;
+    const incoming = validated.message_id;
+    const { id: messageId, mailbox } = await this.resolveRef(incoming, validated.mailbox);
 
-    logger.debug(
-      { messageId, includeBody: validated.include_body },
-      'Getting message'
-    );
+    logger.debug({ messageId, includeBody: validated.include_body }, 'Getting message');
 
     try {
-      const message = await this.graphClient.getMessage(
-        messageId,
-        validated.include_body,
-        validated.mailbox
-      );
+      const message = await this.graphClient.getMessage(messageId, validated.include_body, mailbox);
 
-      // Remember the message + its attachment IDs for later (re-encoded) relays.
+      // id-cache fallback for re-encoded relays.
       rememberId(this.userKey, message.id);
       (message.attachments ?? []).forEach((a) => rememberId(this.userKey, a.id));
-      return formatMessage(message, validated.include_body);
+
+      // Re-use the incoming handle for the message when the call arrived via one;
+      // mint attachment handles so mail_get_attachment uses the same mechanism.
+      const self = MailTools.HANDLE_RE.test(incoming)
+        ? incoming
+        : await this.mintRef('msg', message.id, mailbox);
+      const attachments: Record<string, string> = {};
+      for (const a of message.attachments ?? []) {
+        if (a.isInline) continue;
+        attachments[a.id] = await this.mintRef('att', a.id, mailbox);
+      }
+
+      return formatMessage(message, validated.include_body, { self, attachments });
     } catch (err) {
       const code = (err as { code?: string }).code;
       if (code === 'ErrorInvalidMailboxItemId') {
