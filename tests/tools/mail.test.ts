@@ -607,25 +607,24 @@ describe('Mail Tools', () => {
 
     it('get_attachment resolves a message handle and auto-selects the lone attachment', async () => {
       (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: 'pdf-1', name: 'Rechnung.pdf', contentType: 'application/pdf', size: 1234, isInline: false },
+        { id: 'pdf-1', name: 'note.txt', contentType: 'text/plain', size: 5, isInline: false },
       ]);
       (mockGraphClient.getAttachment as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'pdf-1',
-        name: 'Rechnung.pdf',
-        contentType: 'application/pdf',
-        size: 1234,
-        contentBytes: Buffer.from('%PDF-1.4 test').toString('base64'),
+        name: 'note.txt',
+        contentType: 'text/plain',
+        size: 5,
+        contentBytes: Buffer.from('hello').toString('base64'),
       });
 
       const tools = new MailTools(mockGraphClient, ctx);
       const listed = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
       const handle = listed.messages[0]!.id;
 
-      // The mock PDF bytes are not a structurally valid PDF, so parsing throws after the
-      // Graph calls complete. We verify the calls happened with the resolved real ids.
-      try { await tools.getAttachment({ message_id: handle }); } catch { /* parse error expected */ }
+      const result = (await tools.getAttachment({ message_id: handle })) as { content: string };
       expect(mockGraphClient.listAttachments).toHaveBeenCalledWith('msg-1', undefined);
       expect(mockGraphClient.getAttachment).toHaveBeenCalledWith('msg-1', 'pdf-1', undefined);
+      expect(result.content).toBe('hello');
     });
 
     it('multi-attachment selection returns attachment handles, not raw ids', async () => {
