@@ -23,6 +23,33 @@ vi.mock('../../src/utils/logger.js', () => ({
 
 import { isParsableMimeType, parseFileContent, stripHtmlTags, inflateRawCapped } from '../../src/utils/file-parser.js';
 
+// Builds a structurally valid single-page PDF (correct xref offsets) so the real
+// pdf-parse (v2 / pdfjs) code path is exercised without mocking. This guards the
+// v1->v2 API regression that produced "pdfParse is not a function" in production.
+function makeMinimalPdf(text: string): Buffer {
+  const stream = `BT /F1 24 Tf 72 700 Td (${text}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objects.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((off) => {
+    pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, 'latin1');
+}
+
 describe('file-parser', () => {
   describe('isParsableMimeType', () => {
     it('should recognize PDF MIME type', () => {
@@ -84,6 +111,17 @@ describe('file-parser', () => {
       expect(result.text).toBe(csv);
       expect(result.truncated).toBe(false);
       expect(result.format).toBe('csv');
+    });
+
+    it('should extract text from a real PDF (regression: pdf-parse v2 API)', async () => {
+      const buffer = makeMinimalPdf('Hello PDF World');
+
+      const result = await parseFileContent(buffer, 'application/pdf', 'doc.pdf');
+
+      expect(result.format).toBe('pdf');
+      expect(result.text.length).toBeGreaterThan(0);
+      expect(result.text).toContain('Hello');
+      expect(result.text).toContain('World');
     });
 
     it('should strip HTML tags', async () => {
