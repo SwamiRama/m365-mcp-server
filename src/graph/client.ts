@@ -243,6 +243,22 @@ export class GraphClient {
   }
 
   /**
+   * Resolve the mailbox path segment for a Graph request.
+   * Personal-mailbox sentinels ("me", "mine", "personal", or empty/whitespace) map to
+   * "/me"; a real address or user id maps to "/users/{id}". The id is percent-encoded:
+   * Graph user ids/UPNs are safe but a model may pass arbitrary text, and encoding both
+   * avoids `TargetIdShouldNotBeMeOrWhitespace`/malformed paths and prevents path injection
+   * via a crafted mailbox value (e.g. containing "/" or "..").
+   */
+  private mailboxBase(userId?: string): string {
+    const u = userId?.trim();
+    if (!u) return '/me';
+    const lower = u.toLowerCase();
+    if (lower === 'me' || lower === 'mine' || lower === 'personal') return '/me';
+    return `/users/${encodeURIComponent(u)}`;
+  }
+
+  /**
    * Execute a Graph API request with retry logic for rate limiting
    */
   private async executeWithRetry<T>(
@@ -352,7 +368,7 @@ export class GraphClient {
   // === Mail Operations ===
 
   async listMailFolders(userId?: string): Promise<GraphMailFolder[]> {
-    const base = userId ? `/users/${userId}` : '/me';
+    const base = this.mailboxBase(userId);
     return this.fetchAllPages<GraphMailFolder>(
       () =>
         this.client
@@ -365,7 +381,7 @@ export class GraphClient {
   }
 
   async listChildFolders(parentFolderId: string, userId?: string): Promise<GraphMailFolder[]> {
-    const base = userId ? `/users/${userId}` : '/me';
+    const base = this.mailboxBase(userId);
     return this.fetchAllPages<GraphMailFolder>(
       () =>
         this.client
@@ -389,7 +405,7 @@ export class GraphClient {
   }): Promise<{ messages: GraphMessage[]; nextLink?: string }> {
     const { folderId, top = 25, skip, filter, search, select, orderBy, userId } = options;
 
-    const base = userId ? `/users/${userId}` : '/me';
+    const base = this.mailboxBase(userId);
     const endpoint = folderId
       ? `${base}/mailFolders/${encodeURIComponent(folderId)}/messages`
       : `${base}/messages`;
@@ -457,7 +473,7 @@ export class GraphClient {
       selectFields.push('body');
     }
 
-    const base = userId ? `/users/${userId}` : '/me';
+    const base = this.mailboxBase(userId);
     return this.executeWithRetry(
       () =>
         this.client
@@ -470,7 +486,7 @@ export class GraphClient {
   }
 
   async getAttachment(messageId: string, attachmentId: string, userId?: string): Promise<GraphAttachment> {
-    const base = userId ? `/users/${userId}` : '/me';
+    const base = this.mailboxBase(userId);
     return this.executeWithRetry(
       () =>
         this.client
