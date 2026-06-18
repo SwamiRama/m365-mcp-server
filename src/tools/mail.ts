@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 import { stripHtmlTags, isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
 import { isTextMimeType, formatFileSize } from '../utils/content-fetcher.js';
 import { rememberId, resolveId } from '../utils/id-cache.js';
-import { handleStore } from '../utils/handle-store.js';
+import { handleStore, type HandleKind } from '../utils/handle-store.js';
 
 /**
  * User context from the authenticated session.
@@ -198,7 +198,7 @@ export class MailTools {
 
   // Mint a handle for an id we are handing out. Without identity, return the raw
   // id so the model still gets something the raw-id fallback path can resolve.
-  private async mintRef(kind: 'msg' | 'att', realId: string, mailbox?: string): Promise<string> {
+  private async mintRef(kind: HandleKind, realId: string, mailbox?: string): Promise<string> {
     const key = this.identityKey;
     if (!key) return realId;
     return handleStore.mint(key, kind, { realId, mailbox });
