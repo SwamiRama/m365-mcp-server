@@ -66,32 +66,29 @@ describe('Mail Tools', () => {
       expect(result).toHaveProperty('count', 2);
     });
 
-    it('should use the normalizable "me" sentinel as mailbox_context when no mailbox and no userContext', async () => {
+    it('tells the model to OMIT the mailbox for the personal mailbox (no mailbox passed)', async () => {
       const result = await mailTools.listMessages({}) as Record<string, unknown>;
 
-      // 'me' is server-normalized to /me; the note must tell the model to pass it
-      // (no longer the contradictory "do NOT pass a mailbox parameter").
-      expect(result['mailbox_context']).toBe('me');
-      expect(result['_note']).toContain("mailbox='me'");
-      expect(result['_note']).not.toContain('do NOT pass');
+      // Personal mail defaults to /me; the model must NOT pass a mailbox value
+      // (so it cannot invent "me"/""). mailbox_context is purely informational.
+      expect(result['mailbox_context']).toBe('personal');
+      expect(result['_note']).toContain('OMIT the mailbox parameter');
+      expect(result['_note']).not.toContain("mailbox='");
     });
 
-    it('should include mailbox_context with user email when userContext is provided', async () => {
+    it('still treats own mail as personal even when userContext is set (no forced mailbox)', async () => {
       const mailToolsWithContext = new MailTools(mockGraphClient, {
         userEmail: 'user@example.com',
         userId: 'user-id-123',
       });
       const result = await mailToolsWithContext.listMessages({}) as Record<string, unknown>;
 
-      expect(result['mailbox_context']).toBe('user@example.com');
-      expect(result['_note']).toContain("mailbox='user@example.com'");
+      expect(result['mailbox_context']).toBe('personal');
+      expect(result['_note']).toContain('OMIT the mailbox parameter');
     });
 
-    it('should prefer explicit mailbox over userContext email', async () => {
-      const mailToolsWithContext = new MailTools(mockGraphClient, {
-        userEmail: 'user@example.com',
-      });
-      const result = await mailToolsWithContext.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
+    it('passes through an explicit shared mailbox and tells the model to set it', async () => {
+      const result = await mailTools.listMessages({ mailbox: 'shared@example.com' }) as Record<string, unknown>;
 
       expect(result['mailbox_context']).toBe('shared@example.com');
       expect(result['_note']).toContain("mailbox='shared@example.com'");
