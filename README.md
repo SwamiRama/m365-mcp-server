@@ -127,6 +127,8 @@ docker-compose --profile with-mcpo up -d
 
 All email tools accept an optional `mailbox` parameter (email address or user ID) to access shared mailboxes. Omit to use your personal mailbox. Requires `Mail.Read.Shared` permission with admin consent.
 
+`mail_list_messages`, `mail_get_message`, and `mail_get_attachment` return a short reference id (e.g. `m_a1b2c3d4e5f6`) instead of the raw Graph id. Pass this id back verbatim when calling subsequent mail tools — it resolves to the correct resource for the duration of the session (`HANDLE_TTL_SECONDS`).
+
 ### SharePoint/OneDrive Tools
 
 | Tool | Description |
@@ -227,6 +229,7 @@ See [docs/security/threat-model.md](docs/security/threat-model.md) for full secu
 | `NODE_ENV` | No | development | Environment mode |
 | `FILE_PARSE_TIMEOUT_MS` | No | 30000 | Document parsing timeout |
 | `FILE_PARSE_MAX_OUTPUT_KB` | No | 500 | Max parsed text output size |
+| `HANDLE_TTL_SECONDS` | No | 86400 | How long a mail reference id stays resolvable |
 
 ## Development
 
