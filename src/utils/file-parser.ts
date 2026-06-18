@@ -124,16 +124,16 @@ async function parseByFormat(
  * Parse PDF to text using pdf-parse.
  */
 async function parsePdf(buffer: Buffer): Promise<string> {
-  // pdf-parse uses CommonJS export = syntax — handle both ESM default and CJS shapes
-  const pdfParseModule = await import('pdf-parse');
-  const pdfParse = ((pdfParseModule as any).default ?? pdfParseModule) as unknown as (
-    dataBuffer: Buffer,
-    options?: { max?: number }
-  ) => Promise<{ text: string }>;
-  const result = await pdfParse(buffer, {
-    max: 0, // No page limit (0 = all pages)
-  });
-  return result.text;
+  // pdf-parse v2 exposes a `PDFParse` class (no default export). The old v1 call
+  // form `pdfParse(buffer)` no longer exists and throws "pdfParse is not a function".
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const result = await parser.getText();
+    return result.text;
+  } finally {
+    await parser.destroy();
+  }
 }
 
 /**
