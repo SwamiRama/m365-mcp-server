@@ -15,6 +15,7 @@ const configSchema = z.object({
   // Session
   sessionSecret: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
   sessionTtlSecs: z.coerce.number().int().positive().default(86400), // 24 hours
+  handleTtlSecs: z.coerce.number().int().positive().default(86400), // 24h; how long a mail handle resolves
 
   // Redis (optional)
   redisUrl: z.string().url().optional(),
@@ -102,6 +103,7 @@ function loadConfig(): Config {
     nodeEnv: process.env['NODE_ENV'],
     sessionSecret: process.env['SESSION_SECRET'],
     sessionTtlSecs: process.env['SESSION_TTL_SECONDS'],
+    handleTtlSecs: process.env['HANDLE_TTL_SECONDS'],
     redisUrl: process.env['REDIS_URL'],
     rateLimitWindowMs: process.env['RATE_LIMIT_WINDOW_MS'],
     rateLimitMaxRequests: process.env['RATE_LIMIT_MAX_REQUESTS'],
