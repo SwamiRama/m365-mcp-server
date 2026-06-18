@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MailTools, listMessagesInputSchema, getMessageInputSchema, listFoldersInputSchema, getAttachmentInputSchema } from '../../src/tools/mail.js';
 import type { GraphClient, GraphMessage, GraphAttachment } from '../../src/graph/client.js';
+import { __clearIdCache } from '../../src/utils/id-cache.js';
 
 describe('Mail Tools', () => {
   let mockGraphClient: GraphClient;
@@ -34,6 +35,7 @@ describe('Mail Tools', () => {
   ];
 
   beforeEach(() => {
+    __clearIdCache();
     mockGraphClient = {
       listMessages: vi.fn().mockResolvedValue({ messages: mockMessages }),
       getMessage: vi.fn().mockResolvedValue(mockMessages[0]),
@@ -92,6 +94,13 @@ describe('Mail Tools', () => {
 
       expect(result['mailbox_context']).toBe('shared@example.com');
       expect(result['_note']).toContain("mailbox='shared@example.com'");
+    });
+
+    it('resolves a re-encoded message id from a prior list back to the real id', async () => {
+      await mailTools.listMessages({}); // hands out (and remembers) canonical id 'msg-1'
+      await mailTools.getMessage({ message_id: 'msg+1' }); // model relays '-' as '+'
+      // the GraphClient must be called with the canonical id, not the re-encoded one
+      expect(mockGraphClient.getMessage).toHaveBeenCalledWith('msg-1', true, undefined);
     });
 
     it('should resolve well-known folder names', async () => {

@@ -3,6 +3,7 @@ import { GraphClient, type GraphMessage, type GraphMailFolder } from '../graph/c
 import { logger } from '../utils/logger.js';
 import { stripHtmlTags, isParsableMimeType, parseFileContent } from '../utils/file-parser.js';
 import { isTextMimeType, formatFileSize } from '../utils/content-fetcher.js';
+import { rememberId, resolveId } from '../utils/id-cache.js';
 
 /**
  * User context from the authenticated session.
@@ -176,6 +177,11 @@ export class MailTools {
     this.userContext = userContext;
   }
 
+  // Per-user namespace for the Graph ID resolution cache.
+  private get userKey(): string {
+    return this.userContext?.userId ?? this.userContext?.userEmail ?? 'default';
+  }
+
   /**
    * List messages in a mail folder
    */
@@ -223,6 +229,9 @@ export class MailTools {
       userId: validated.mailbox,
     });
 
+    // Remember the canonical IDs we hand out so a later (possibly re-encoded) relay resolves back.
+    result.messages.forEach((m) => rememberId(this.userKey, m.id));
+
     // The personal mailbox is the default (/me) and needs no parameter. Only a shared
     // mailbox needs a value. Tell the model to OMIT mailbox for its own mail (so it
     // cannot invent "me"/""), and to pass the shared address only when these messages
@@ -245,19 +254,23 @@ export class MailTools {
    */
   async getMessage(input: GetMessageInput): Promise<object> {
     const validated = getMessageInputSchema.parse(input);
+    const messageId = resolveId(this.userKey, validated.message_id) ?? validated.message_id;
 
     logger.debug(
-      { messageId: validated.message_id, includeBody: validated.include_body },
+      { messageId, includeBody: validated.include_body },
       'Getting message'
     );
 
     try {
       const message = await this.graphClient.getMessage(
-        validated.message_id,
+        messageId,
         validated.include_body,
         validated.mailbox
       );
 
+      // Remember the message + its attachment IDs for later (re-encoded) relays.
+      rememberId(this.userKey, message.id);
+      (message.attachments ?? []).forEach((a) => rememberId(this.userKey, a.id));
       return formatMessage(message, validated.include_body);
     } catch (err) {
       const code = (err as { code?: string }).code;
@@ -310,15 +323,19 @@ export class MailTools {
    */
   async getAttachment(input: GetAttachmentInput): Promise<object> {
     const validated = getAttachmentInputSchema.parse(input);
+    const messageId = resolveId(this.userKey, validated.message_id) ?? validated.message_id;
 
-    // The model frequently omits the attachment id (it cannot reliably thread a
-    // second opaque id across tool calls). When it is missing, resolve it from the
-    // message: auto-select a lone attachment, or return the list to choose from.
-    let attachmentId = validated.attachment_id?.trim();
+    // The model often omits the attachment id, or relays an imperfectly re-encoded one
+    // (it cannot reliably thread a second opaque id). Resolve a provided id against the
+    // IDs we handed out; when none is given, resolve it from the message itself:
+    // auto-select a lone attachment, or return the list to choose from.
+    const requested = validated.attachment_id?.trim();
+    let attachmentId = requested ? resolveId(this.userKey, requested) : undefined;
     if (!attachmentId) {
       const candidates = (
-        await this.graphClient.listAttachments(validated.message_id, validated.mailbox)
+        await this.graphClient.listAttachments(messageId, validated.mailbox)
       ).filter((a) => !a.isInline);
+      candidates.forEach((a) => rememberId(this.userKey, a.id));
 
       if (candidates.length === 0) {
         throw new Error('This message has no readable (non-inline) attachments.');
@@ -342,13 +359,13 @@ export class MailTools {
     }
 
     logger.debug(
-      { messageId: validated.message_id, attachmentId },
+      { messageId, attachmentId },
       'Getting attachment'
     );
 
     try {
       const attachment = await this.graphClient.getAttachment(
-        validated.message_id,
+        messageId,
         attachmentId,
         validated.mailbox
       );
