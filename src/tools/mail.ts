@@ -263,6 +263,14 @@ export class MailTools {
         enrichedError.statusCode = (err as { statusCode?: number }).statusCode;
         throw enrichedError;
       }
+      if (code === 'ErrorInvalidIdMalformed') {
+        const enrichedError = new Error(
+          'The message_id is not a valid Microsoft Graph ID. Call mail_list_messages again and pass the exact "id" value from its response verbatim (do not shorten, truncate, or modify it).'
+        ) as Error & { code?: string; statusCode?: number };
+        enrichedError.code = code;
+        enrichedError.statusCode = (err as { statusCode?: number }).statusCode;
+        throw enrichedError;
+      }
       throw err;
     }
   }
