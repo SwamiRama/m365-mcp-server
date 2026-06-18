@@ -372,18 +372,20 @@ export class MailTools {
    */
   async getAttachment(input: GetAttachmentInput): Promise<object> {
     const validated = getAttachmentInputSchema.parse(input);
-    const messageId = resolveId(this.userKey, validated.message_id) ?? validated.message_id;
+    const { id: messageId, mailbox } = await this.resolveRef(validated.message_id, validated.mailbox);
 
-    // The model often omits the attachment id, or relays an imperfectly re-encoded one
-    // (it cannot reliably thread a second opaque id). Resolve a provided id against the
-    // IDs we handed out; when none is given, resolve it from the message itself:
-    // auto-select a lone attachment, or return the list to choose from.
+    // The model often omits the attachment id, or relays a re-encoded/handle one.
+    // Resolve a provided id (handle or raw) against what we handed out; when none is
+    // given, resolve it from the message: auto-select a lone attachment, else list.
     const requested = validated.attachment_id?.trim();
-    let attachmentId = requested ? resolveId(this.userKey, requested) : undefined;
+    let attachmentId: string | undefined;
+    if (requested) {
+      attachmentId = (await this.resolveRef(requested, mailbox)).id;
+    }
     if (!attachmentId) {
-      const candidates = (
-        await this.graphClient.listAttachments(messageId, validated.mailbox)
-      ).filter((a) => !a.isInline);
+      const candidates = (await this.graphClient.listAttachments(messageId, mailbox)).filter(
+        (a) => !a.isInline
+      );
       candidates.forEach((a) => rememberId(this.userKey, a.id));
 
       if (candidates.length === 0) {
@@ -393,12 +395,14 @@ export class MailTools {
         return {
           needs_selection: true,
           message: `This message has ${candidates.length} attachments. Call mail_get_attachment again with one of the listed attachment_id values.`,
-          attachments: candidates.map((a) => ({
-            attachment_id: a.id,
-            name: a.name,
-            contentType: a.contentType,
-            size: a.size,
-          })),
+          attachments: await Promise.all(
+            candidates.map(async (a) => ({
+              attachment_id: await this.mintRef('att', a.id, mailbox),
+              name: a.name,
+              contentType: a.contentType,
+              size: a.size,
+            }))
+          ),
         };
       }
       attachmentId = candidates[0]?.id;
@@ -416,7 +420,7 @@ export class MailTools {
       const attachment = await this.graphClient.getAttachment(
         messageId,
         attachmentId,
-        validated.mailbox
+        mailbox
       );
 
       const odataType = attachment['@odata.type'] ?? '';

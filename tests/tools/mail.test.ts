@@ -604,6 +604,47 @@ describe('Mail Tools', () => {
       const result = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
       expect(result.messages[0]?.id).toBe('msg-1');
     });
+
+    it('get_attachment resolves a message handle and auto-selects the lone attachment', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'pdf-1', name: 'Rechnung.pdf', contentType: 'application/pdf', size: 1234, isInline: false },
+      ]);
+      (mockGraphClient.getAttachment as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'pdf-1',
+        name: 'Rechnung.pdf',
+        contentType: 'application/pdf',
+        size: 1234,
+        contentBytes: Buffer.from('%PDF-1.4 test').toString('base64'),
+      });
+
+      const tools = new MailTools(mockGraphClient, ctx);
+      const listed = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
+      const handle = listed.messages[0]!.id;
+
+      // The mock PDF bytes are not a structurally valid PDF, so parsing throws after the
+      // Graph calls complete. We verify the calls happened with the resolved real ids.
+      try { await tools.getAttachment({ message_id: handle }); } catch { /* parse error expected */ }
+      expect(mockGraphClient.listAttachments).toHaveBeenCalledWith('msg-1', undefined);
+      expect(mockGraphClient.getAttachment).toHaveBeenCalledWith('msg-1', 'pdf-1', undefined);
+    });
+
+    it('multi-attachment selection returns attachment handles, not raw ids', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'pdf-1', name: 'A.pdf', contentType: 'application/pdf', size: 10, isInline: false },
+        { id: 'pdf-2', name: 'B.pdf', contentType: 'application/pdf', size: 20, isInline: false },
+      ]);
+
+      const tools = new MailTools(mockGraphClient, ctx);
+      const listed = (await tools.listMessages({})) as { messages: Array<{ id: string }> };
+      const handle = listed.messages[0]!.id;
+
+      const result = (await tools.getAttachment({ message_id: handle })) as {
+        needs_selection: boolean;
+        attachments: Array<{ attachment_id: string }>;
+      };
+      expect(result.needs_selection).toBe(true);
+      expect(result.attachments[0]?.attachment_id).toMatch(/^a_[0-9a-f]{12}$/);
+    });
   });
 });
 
