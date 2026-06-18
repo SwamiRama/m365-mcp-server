@@ -5,6 +5,10 @@ import { config } from '../../src/utils/config.js';
 import { MemoryHandleStore, RedisHandleStore } from '../../src/utils/handle-store.js';
 
 describe('HandleStore', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe('MemoryHandleStore', () => {
     let store: MemoryHandleStore;
     beforeEach(() => {
@@ -35,11 +39,14 @@ describe('HandleStore', () => {
 
     it('expires a handle after handleTtlSecs', async () => {
       vi.useFakeTimers();
-      vi.setSystemTime(0);
-      const handle = await store.mint('user-1', 'msg', { realId: 'X==' });
-      vi.setSystemTime(config.handleTtlSecs * 1000 + 1);
-      expect(await store.resolve('user-1', handle)).toBeNull();
-      vi.useRealTimers();
+      try {
+        vi.setSystemTime(0);
+        const handle = await store.mint('user-1', 'msg', { realId: 'X==' });
+        vi.setSystemTime(config.handleTtlSecs * 1000 + 1);
+        expect(await store.resolve('user-1', handle)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
