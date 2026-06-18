@@ -13,9 +13,14 @@ export interface UserContext {
   userId?: string;
 }
 
-// Shared mailbox schema — email address or Graph user ID
-const mailboxSchema = z.string().min(1).max(256)
-  .describe('Email address or user ID of a shared mailbox. Omit to use your personal mailbox.');
+// Shared-mailbox selector. The personal mailbox is the default (/me) and needs NO
+// value here. Empty/whitespace is coerced to "omitted" so a stray "" never trips Zod
+// before the GraphClient mailbox normalization can run.
+const mailboxSchema = z
+  .string()
+  .max(256)
+  .transform((v) => (v.trim() ? v.trim() : undefined))
+  .describe('Email address of a SHARED mailbox. OMIT for your own mailbox (the default). Never pass "me" or an empty value.');
 
 // Input schemas for mail tools
 export const listMessagesInputSchema = z.object({
@@ -218,23 +223,20 @@ export class MailTools {
       userId: validated.mailbox,
     });
 
-    // Determine the effective mailbox identifier for this response.
-    // When no explicit mailbox was specified, use the authenticated user's email
-    // so the LLM can pass it as the 'mailbox' parameter in follow-up calls.
-    // This makes message IDs portable across MCP sessions (where /me might resolve differently).
-    const effectiveMailbox = validated.mailbox ?? this.userContext?.userEmail;
-
-    // Single, non-contradictory instruction. 'me' is a safe sentinel: the server
-    // normalizes me/mine/personal/empty to the personal mailbox (/me), and a real
-    // address routes to /users/{address}. Either way the model passes one value.
-    const mailboxContext = effectiveMailbox ?? 'me';
+    // The personal mailbox is the default (/me) and needs no parameter. Only a shared
+    // mailbox needs a value. Tell the model to OMIT mailbox for its own mail (so it
+    // cannot invent "me"/""), and to pass the shared address only when these messages
+    // came from one. Mirrors how the upstream server scopes shared vs personal.
+    const sharedMailbox = validated.mailbox;
 
     return {
       messages: result.messages.map((m) => formatMessage(m)),
       count: result.messages.length,
       hasMore: !!result.nextLink,
-      mailbox_context: mailboxContext,
-      _note: `To open any of these messages with mail_get_message (or mail_get_attachment), pass mailbox='${mailboxContext}' exactly as shown here, together with the message's id. Do not alter or invent these values.`,
+      mailbox_context: sharedMailbox ?? 'personal',
+      _note: sharedMailbox
+        ? `These messages are from the shared mailbox '${sharedMailbox}'. To open one with mail_get_message or mail_get_attachment, set mailbox='${sharedMailbox}' and pass the message's id.`
+        : `These messages are from your own mailbox. To open one with mail_get_message or mail_get_attachment, pass only the message's id and OMIT the mailbox parameter.`,
     };
   }
 
@@ -462,7 +464,7 @@ export const mailToolDefinitions = [
         },
         mailbox: {
           type: 'string',
-          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+          description: 'Email address of a SHARED mailbox. OMIT for your own mailbox (the default).',
         },
       },
     },
@@ -470,7 +472,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_message',
     description:
-      'Get full email details including body (HTML auto-converted to plain text), CC/BCC recipients, and attachment metadata. Body is included by default. IMPORTANT: The message_id MUST be from a recent mail_list_messages call. You MUST pass the mailbox parameter with the exact mailbox_context value from the mail_list_messages response. If attachments are listed, use mail_get_attachment to read their content.',
+      'Get full email details including body (HTML auto-converted to plain text), CC/BCC recipients, and attachment metadata. Body is included by default. The message_id MUST be the exact id from a recent mail_list_messages call. For your own mailbox, OMIT the mailbox parameter (it defaults to you); only set mailbox to a shared mailbox email address when the listed messages came from one. To read an attachment, call mail_get_attachment with the same message_id.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -484,7 +486,7 @@ export const mailToolDefinitions = [
         },
         mailbox: {
           type: 'string',
-          description: 'The mailbox_context value from the mail_list_messages response. MUST be provided to ensure the message ID resolves correctly.',
+          description: 'Email address of a SHARED mailbox. OMIT for your own mailbox (the default). Never pass "me" or an empty string.',
         },
       },
       required: ['message_id'],
@@ -503,7 +505,7 @@ export const mailToolDefinitions = [
         },
         mailbox: {
           type: 'string',
-          description: 'Email address or user ID of a shared mailbox. Omit to use your personal mailbox.',
+          description: 'Email address of a SHARED mailbox. OMIT for your own mailbox (the default).',
         },
       },
     },
@@ -525,7 +527,7 @@ export const mailToolDefinitions = [
         },
         mailbox: {
           type: 'string',
-          description: 'The mailbox_context value from the original mail_list_messages response.',
+          description: 'Email address of a SHARED mailbox. OMIT for your own mailbox (the default).',
         },
       },
       required: ['message_id'],
