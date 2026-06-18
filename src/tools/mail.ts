@@ -73,7 +73,10 @@ export const listFoldersInputSchema = z.object({
 
 export const getAttachmentInputSchema = z.object({
   message_id: z.string().min(1).describe('The message ID containing the attachment'),
-  attachment_id: z.string().min(1).describe('The attachment ID from mail_get_message response'),
+  attachment_id: z
+    .string()
+    .optional()
+    .describe('The attachment ID. Omit it to auto-select when the message has a single attachment.'),
   mailbox: mailboxSchema.optional(),
 });
 
@@ -306,15 +309,45 @@ export class MailTools {
   async getAttachment(input: GetAttachmentInput): Promise<object> {
     const validated = getAttachmentInputSchema.parse(input);
 
+    // The model frequently omits the attachment id (it cannot reliably thread a
+    // second opaque id across tool calls). When it is missing, resolve it from the
+    // message: auto-select a lone attachment, or return the list to choose from.
+    let attachmentId = validated.attachment_id?.trim();
+    if (!attachmentId) {
+      const candidates = (
+        await this.graphClient.listAttachments(validated.message_id, validated.mailbox)
+      ).filter((a) => !a.isInline);
+
+      if (candidates.length === 0) {
+        throw new Error('This message has no readable (non-inline) attachments.');
+      }
+      if (candidates.length > 1) {
+        return {
+          needs_selection: true,
+          message: `This message has ${candidates.length} attachments. Call mail_get_attachment again with one of the listed attachment_id values.`,
+          attachments: candidates.map((a) => ({
+            attachment_id: a.id,
+            name: a.name,
+            contentType: a.contentType,
+            size: a.size,
+          })),
+        };
+      }
+      attachmentId = candidates[0]?.id;
+      if (!attachmentId) {
+        throw new Error('This message has no readable (non-inline) attachments.');
+      }
+    }
+
     logger.debug(
-      { messageId: validated.message_id, attachmentId: validated.attachment_id },
+      { messageId: validated.message_id, attachmentId },
       'Getting attachment'
     );
 
     try {
       const attachment = await this.graphClient.getAttachment(
         validated.message_id,
-        validated.attachment_id,
+        attachmentId,
         validated.mailbox
       );
 
@@ -478,7 +511,7 @@ export const mailToolDefinitions = [
   {
     name: 'mail_get_attachment',
     description:
-      'Read the content of an email attachment. Automatically parses PDF, Word, Excel, PowerPoint, CSV, and HTML into readable text. Text files are returned as-is. Binary files return metadata only (no base64 dumps). Max 20 MB. Use attachment IDs from the mail_get_message response.',
+      'Read the content of an email attachment. Automatically parses PDF, Word, Excel, PowerPoint, CSV, and HTML into readable text. Text files are returned as-is. Binary files return metadata only (no base64 dumps). Max 20 MB. Pass attachment_id from a mail_get_message response, or omit it to auto-select when the message has a single attachment (if there are several, the tool returns the list to choose from).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -488,14 +521,14 @@ export const mailToolDefinitions = [
         },
         attachment_id: {
           type: 'string',
-          description: 'The attachment ID from the mail_get_message response.',
+          description: 'The attachment ID from a mail_get_message response. Optional: omit it to auto-select when the message has exactly one attachment.',
         },
         mailbox: {
           type: 'string',
           description: 'The mailbox_context value from the original mail_list_messages response.',
         },
       },
-      required: ['message_id', 'attachment_id'],
+      required: ['message_id'],
     },
   },
 ];

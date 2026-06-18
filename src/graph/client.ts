@@ -496,6 +496,19 @@ export class GraphClient {
     );
   }
 
+  async listAttachments(messageId: string, userId?: string): Promise<GraphAttachment[]> {
+    const base = this.mailboxBase(userId);
+    const result = await this.executeWithRetry(
+      () =>
+        this.client
+          .api(`${base}/messages/${encodeURIComponent(messageId)}/attachments`)
+          .select('id,name,contentType,size,isInline')
+          .get(),
+      'listAttachments'
+    );
+    return (result as { value?: GraphAttachment[] }).value ?? [];
+  }
+
   // === SharePoint/OneDrive Operations ===
 
   async listSites(options: {

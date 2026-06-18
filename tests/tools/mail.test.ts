@@ -45,6 +45,7 @@ describe('Mail Tools', () => {
         { id: 'subfolder-1', displayName: 'Subfolder A', parentFolderId: 'inbox-id', unreadItemCount: 1, totalItemCount: 10, childFolderCount: 0 },
       ]),
       getAttachment: vi.fn(),
+      listAttachments: vi.fn(),
     } as unknown as GraphClient;
 
     mailTools = new MailTools(mockGraphClient);
@@ -314,6 +315,73 @@ describe('Mail Tools', () => {
   });
 
   describe('getAttachment', () => {
+    // The model often calls mail_get_attachment without a (valid) attachment_id
+    // because it cannot thread a second opaque id. The tool resolves it from the message.
+    it('auto-selects the single attachment when attachment_id is omitted', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'pdf-1', name: 'Rechnung.pdf', contentType: 'application/pdf', size: 1000, isInline: false },
+      ]);
+      (mockGraphClient.getAttachment as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'pdf-1', '@odata.type': '#microsoft.graph.fileAttachment', name: 'Rechnung.pdf',
+        contentType: 'text/plain', size: 5, isInline: false,
+        contentBytes: Buffer.from('hello').toString('base64'),
+      });
+
+      const result = await mailTools.getAttachment({ message_id: 'msg-1' }) as Record<string, unknown>;
+
+      expect(mockGraphClient.listAttachments).toHaveBeenCalledWith('msg-1', undefined);
+      expect(mockGraphClient.getAttachment).toHaveBeenCalledWith('msg-1', 'pdf-1', undefined);
+      expect(result['content']).toBe('hello');
+    });
+
+    it('treats a blank attachment_id the same as omitted', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'only-1', name: 'a.txt', contentType: 'text/plain', size: 1, isInline: false },
+      ]);
+      (mockGraphClient.getAttachment as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'only-1', '@odata.type': '#microsoft.graph.fileAttachment', name: 'a.txt',
+        contentType: 'text/plain', size: 1, isInline: false, contentBytes: Buffer.from('x').toString('base64'),
+      });
+
+      await mailTools.getAttachment({ message_id: 'msg-1', attachment_id: '   ' });
+
+      expect(mockGraphClient.getAttachment).toHaveBeenCalledWith('msg-1', 'only-1', undefined);
+    });
+
+    it('returns a selection list when several attachments and no id given (inline excluded)', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'a1', name: 'one.pdf', contentType: 'application/pdf', size: 1, isInline: false },
+        { id: 'a2', name: 'two.docx', contentType: 'application/octet-stream', size: 2, isInline: false },
+        { id: 'sig', name: 'sig.png', contentType: 'image/png', size: 3, isInline: true },
+      ]);
+
+      const result = await mailTools.getAttachment({ message_id: 'msg-1' }) as Record<string, unknown>;
+
+      expect(result['needs_selection']).toBe(true);
+      expect((result['attachments'] as unknown[]).length).toBe(2);
+      expect(mockGraphClient.getAttachment).not.toHaveBeenCalled();
+    });
+
+    it('throws when the message has no readable (non-inline) attachments', async () => {
+      (mockGraphClient.listAttachments as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'sig', name: 'sig.png', contentType: 'image/png', size: 1, isInline: true },
+      ]);
+
+      await expect(mailTools.getAttachment({ message_id: 'msg-1' })).rejects.toThrow(/no readable/);
+    });
+
+    it('uses an explicit attachment_id without listing', async () => {
+      (mockGraphClient.getAttachment as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'att-x', '@odata.type': '#microsoft.graph.fileAttachment', name: 'n.txt',
+        contentType: 'text/plain', size: 1, isInline: false, contentBytes: Buffer.from('y').toString('base64'),
+      });
+
+      await mailTools.getAttachment({ message_id: 'msg-1', attachment_id: 'att-x' });
+
+      expect(mockGraphClient.listAttachments).not.toHaveBeenCalled();
+      expect(mockGraphClient.getAttachment).toHaveBeenCalledWith('msg-1', 'att-x', undefined);
+    });
+
     it('should return parsed text for a text file attachment', async () => {
       const textAttachment: GraphAttachment = {
         id: 'att-1',
@@ -548,10 +616,10 @@ describe('Mail Input Schemas', () => {
   });
 
   describe('getAttachmentInputSchema', () => {
-    it('should require both message_id and attachment_id', () => {
-      expect(getAttachmentInputSchema.safeParse({}).success).toBe(false);
-      expect(getAttachmentInputSchema.safeParse({ message_id: 'msg-1' }).success).toBe(false);
-      expect(getAttachmentInputSchema.safeParse({ attachment_id: 'att-1' }).success).toBe(false);
+    it('requires message_id; attachment_id is optional (auto-resolved when omitted)', () => {
+      expect(getAttachmentInputSchema.safeParse({}).success).toBe(false); // no message_id
+      expect(getAttachmentInputSchema.safeParse({ message_id: 'msg-1' }).success).toBe(true); // attachment_id optional
+      expect(getAttachmentInputSchema.safeParse({ attachment_id: 'att-1' }).success).toBe(false); // still needs message_id
     });
 
     it('should accept valid input', () => {
@@ -571,9 +639,9 @@ describe('Mail Input Schemas', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should reject empty message_id or attachment_id', () => {
+    it('rejects an empty message_id; tolerates an empty attachment_id (handler auto-resolves)', () => {
       expect(getAttachmentInputSchema.safeParse({ message_id: '', attachment_id: 'att-1' }).success).toBe(false);
-      expect(getAttachmentInputSchema.safeParse({ message_id: 'msg-1', attachment_id: '' }).success).toBe(false);
+      expect(getAttachmentInputSchema.safeParse({ message_id: 'msg-1', attachment_id: '' }).success).toBe(true);
     });
   });
 });
