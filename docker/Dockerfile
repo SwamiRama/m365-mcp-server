@@ -3,7 +3,7 @@
 # =============================================================================
 # Build stage
 # =============================================================================
-FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS builder
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS builder
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ RUN npm prune --production
 # =============================================================================
 # Production stage
 # =============================================================================
-FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS production
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS production
 
 # Security: Run as non-root user
 RUN addgroup -g 1001 -S nodejs && \
